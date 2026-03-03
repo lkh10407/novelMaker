@@ -1,23 +1,171 @@
-"""JSON file-based project storage.
+"""Project storage with pluggable backend (local filesystem or GCS).
 
-Each project is stored as a directory under `data/projects/{project_id}/`
-with a `state.json` file containing the full NovelState.
+Each project is stored under `{prefix}/{project_id}/` with:
+  - meta.json: project metadata
+  - state.json: full NovelState
+  - output/: generated chapter files
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 import uuid
+from abc import ABC, abstractmethod
 from pathlib import Path
 
 from novel_maker.models import NovelState
 
 
-DATA_DIR = Path("data/projects")
+# ------------------------------------------------------------------
+# Storage Backend ABC
+# ------------------------------------------------------------------
 
-# Per-project locks to prevent concurrent read-modify-write races.
+class StorageBackend(ABC):
+    """Abstract interface for project data storage."""
+
+    @abstractmethod
+    def read_file(self, path: str) -> str: ...
+
+    @abstractmethod
+    def write_file(self, path: str, content: str) -> None: ...
+
+    @abstractmethod
+    def exists(self, path: str) -> bool: ...
+
+    @abstractmethod
+    def list_dirs(self, prefix: str) -> list[str]: ...
+
+    @abstractmethod
+    def delete_dir(self, path: str) -> None: ...
+
+    @abstractmethod
+    def mkdir(self, path: str) -> None: ...
+
+    @abstractmethod
+    def get_local_path(self, path: str) -> Path:
+        """Return a local filesystem path (for tools that need it)."""
+        ...
+
+
+class LocalStorage(StorageBackend):
+    """Local filesystem storage (default)."""
+
+    def __init__(self, base_dir: str = "data/projects"):
+        self.base = Path(base_dir)
+        self.base.mkdir(parents=True, exist_ok=True)
+
+    def read_file(self, path: str) -> str:
+        return (self.base / path).read_text(encoding="utf-8")
+
+    def write_file(self, path: str, content: str) -> None:
+        fp = self.base / path
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(content, encoding="utf-8")
+
+    def exists(self, path: str) -> bool:
+        return (self.base / path).exists()
+
+    def list_dirs(self, prefix: str) -> list[str]:
+        d = self.base / prefix if prefix else self.base
+        if not d.exists():
+            return []
+        return sorted([p.name for p in d.iterdir() if p.is_dir()])
+
+    def delete_dir(self, path: str) -> None:
+        import shutil
+        target = self.base / path
+        if target.exists():
+            shutil.rmtree(target)
+
+    def mkdir(self, path: str) -> None:
+        (self.base / path).mkdir(parents=True, exist_ok=True)
+
+    def get_local_path(self, path: str) -> Path:
+        fp = self.base / path
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        return fp
+
+
+class GCSStorage(StorageBackend):
+    """Google Cloud Storage backend for production deployments."""
+
+    def __init__(self, bucket_name: str, prefix: str = "projects"):
+        from google.cloud import storage as gcs
+        self.client = gcs.Client()
+        self.bucket = self.client.bucket(bucket_name)
+        self.prefix = prefix
+        self._local_cache = Path("/tmp/novelmaker_cache")
+        self._local_cache.mkdir(parents=True, exist_ok=True)
+
+    def _blob_path(self, path: str) -> str:
+        return f"{self.prefix}/{path}"
+
+    def read_file(self, path: str) -> str:
+        blob = self.bucket.blob(self._blob_path(path))
+        return blob.download_as_text(encoding="utf-8")
+
+    def write_file(self, path: str, content: str) -> None:
+        blob = self.bucket.blob(self._blob_path(path))
+        blob.upload_from_string(content, content_type="application/json")
+
+    def exists(self, path: str) -> bool:
+        blob = self.bucket.blob(self._blob_path(path))
+        return blob.exists()
+
+    def list_dirs(self, prefix: str) -> list[str]:
+        full_prefix = f"{self.prefix}/{prefix}/" if prefix else f"{self.prefix}/"
+        blobs = self.client.list_blobs(self.bucket, prefix=full_prefix, delimiter="/")
+        # Trigger the iteration to populate prefixes
+        list(blobs)
+        dirs = []
+        for p in blobs.prefixes:
+            name = p.rstrip("/").split("/")[-1]
+            dirs.append(name)
+        return sorted(dirs)
+
+    def delete_dir(self, path: str) -> None:
+        full_prefix = self._blob_path(path) + "/"
+        blobs = list(self.client.list_blobs(self.bucket, prefix=full_prefix))
+        if blobs:
+            self.bucket.delete_blobs(blobs)
+
+    def mkdir(self, path: str) -> None:
+        pass  # GCS doesn't need explicit directory creation
+
+    def get_local_path(self, path: str) -> Path:
+        """Download to local cache and return path. For tools needing filesystem."""
+        local = self._local_cache / path
+        local.parent.mkdir(parents=True, exist_ok=True)
+        if self.exists(path):
+            content = self.read_file(path)
+            local.write_text(content, encoding="utf-8")
+        return local
+
+
+# ------------------------------------------------------------------
+# Backend selection
+# ------------------------------------------------------------------
+
+def _get_backend() -> StorageBackend:
+    backend_type = os.getenv("STORAGE_BACKEND", "local")
+    if backend_type == "gcs":
+        bucket = os.getenv("GCS_BUCKET_NAME")
+        if not bucket:
+            raise ValueError("GCS_BUCKET_NAME env var required when STORAGE_BACKEND=gcs")
+        return GCSStorage(bucket_name=bucket)
+    return LocalStorage()
+
+
+_backend = _get_backend()
+
+
+# ------------------------------------------------------------------
+# Per-project locks
+# ------------------------------------------------------------------
+
 _locks: dict[str, asyncio.Lock] = {}
 
 
@@ -52,20 +200,20 @@ class ProjectMeta:
         return cls(**d)
 
 
-def _project_dir(project_id: str) -> Path:
-    return DATA_DIR / project_id
+# ------------------------------------------------------------------
+# Helper paths (relative to backend root)
+# ------------------------------------------------------------------
+
+def _meta_rel(project_id: str) -> str:
+    return f"{project_id}/meta.json"
 
 
-def _meta_path(project_id: str) -> Path:
-    return _project_dir(project_id) / "meta.json"
+def _state_rel(project_id: str) -> str:
+    return f"{project_id}/state.json"
 
 
-def _state_path(project_id: str) -> Path:
-    return _project_dir(project_id) / "state.json"
-
-
-def _output_dir(project_id: str) -> Path:
-    return _project_dir(project_id) / "output"
+def _output_rel(project_id: str) -> str:
+    return f"{project_id}/output"
 
 
 # ------------------------------------------------------------------
@@ -73,11 +221,10 @@ def _output_dir(project_id: str) -> Path:
 # ------------------------------------------------------------------
 
 def create_project(title: str, logline: str, total_chapters: int = 3) -> dict:
-    """Create a new project directory with initial state."""
+    """Create a new project with initial state."""
     project_id = uuid.uuid4().hex[:12]
-    d = _project_dir(project_id)
-    d.mkdir(parents=True, exist_ok=True)
-    _output_dir(project_id).mkdir(exist_ok=True)
+    _backend.mkdir(project_id)
+    _backend.mkdir(_output_rel(project_id))
 
     now = time.time()
     meta = ProjectMeta(
@@ -87,9 +234,9 @@ def create_project(title: str, logline: str, total_chapters: int = 3) -> dict:
         created_at=now,
         updated_at=now,
     )
-    _meta_path(project_id).write_text(
+    _backend.write_file(
+        _meta_rel(project_id),
         json.dumps(meta.to_dict(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
     )
 
     state = NovelState(total_chapters=total_chapters)
@@ -100,16 +247,14 @@ def create_project(title: str, logline: str, total_chapters: int = 3) -> dict:
 
 def list_projects() -> list[dict]:
     """List all projects with metadata."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
     projects = []
-    for d in sorted(DATA_DIR.iterdir()):
-        mp = d / "meta.json"
-        if mp.exists():
-            meta = json.loads(mp.read_text(encoding="utf-8"))
-            # Add progress info
-            sp = d / "state.json"
-            if sp.exists():
-                state_data = json.loads(sp.read_text(encoding="utf-8"))
+    for dirname in _backend.list_dirs(""):
+        meta_path = f"{dirname}/meta.json"
+        if _backend.exists(meta_path):
+            meta = json.loads(_backend.read_file(meta_path))
+            state_path = f"{dirname}/state.json"
+            if _backend.exists(state_path):
+                state_data = json.loads(_backend.read_file(state_path))
                 meta["chapters_written"] = len(state_data.get("chapters_written", []))
                 meta["total_chapters"] = state_data.get("total_chapters", 0)
                 meta["character_count"] = len(state_data.get("characters", []))
@@ -120,33 +265,32 @@ def list_projects() -> list[dict]:
 
 def get_project(project_id: str) -> dict | None:
     """Get project metadata and state."""
-    mp = _meta_path(project_id)
-    if not mp.exists():
+    if not _backend.exists(_meta_rel(project_id)):
         return None
-    meta = json.loads(mp.read_text(encoding="utf-8"))
+    meta = json.loads(_backend.read_file(_meta_rel(project_id)))
     state = load_state(project_id)
     return {**meta, "state": state.model_dump() if state else None}
 
 
 def delete_project(project_id: str) -> bool:
-    """Delete a project directory."""
-    import shutil
-    d = _project_dir(project_id)
-    if d.exists():
-        shutil.rmtree(d)
-        return True
-    return False
+    """Delete a project."""
+    if not _backend.exists(_meta_rel(project_id)):
+        return False
+    _backend.delete_dir(project_id)
+    return True
 
 
 def update_meta(project_id: str, **kwargs) -> dict | None:
     """Update project metadata fields."""
-    mp = _meta_path(project_id)
-    if not mp.exists():
+    if not _backend.exists(_meta_rel(project_id)):
         return None
-    meta = json.loads(mp.read_text(encoding="utf-8"))
+    meta = json.loads(_backend.read_file(_meta_rel(project_id)))
     meta.update(kwargs)
     meta["updated_at"] = time.time()
-    mp.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    _backend.write_file(
+        _meta_rel(project_id),
+        json.dumps(meta, ensure_ascii=False, indent=2),
+    )
     return meta
 
 
@@ -155,25 +299,24 @@ def update_meta(project_id: str, **kwargs) -> dict | None:
 # ------------------------------------------------------------------
 
 def save_state(project_id: str, state: NovelState) -> None:
-    """Save NovelState to disk."""
-    _state_path(project_id).write_text(
+    """Save NovelState."""
+    _backend.write_file(
+        _state_rel(project_id),
         state.model_dump_json(indent=2),
-        encoding="utf-8",
     )
     update_meta(project_id)  # touch updated_at
 
 
 def load_state(project_id: str) -> NovelState | None:
-    """Load NovelState from disk."""
-    sp = _state_path(project_id)
-    if not sp.exists():
+    """Load NovelState."""
+    if not _backend.exists(_state_rel(project_id)):
         return None
-    data = json.loads(sp.read_text(encoding="utf-8"))
+    data = json.loads(_backend.read_file(_state_rel(project_id)))
     return NovelState.model_validate(data)
 
 
 def get_output_dir(project_id: str) -> Path:
-    """Return the output directory for a project."""
-    d = _output_dir(project_id)
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    """Return a local filesystem path for the output directory."""
+    rel = _output_rel(project_id)
+    _backend.mkdir(rel)
+    return _backend.get_local_path(rel).parent / "output" if not isinstance(_backend, LocalStorage) else _backend.get_local_path(rel)

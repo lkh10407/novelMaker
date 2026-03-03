@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
-import { startGeneration, stopGeneration, getGenerationStatus, getExportMarkdownUrl, approveChapter } from '../api';
+import { useState, useRef, useEffect, useMemo } from 'react';
+import { startGeneration, stopGeneration, getGenerationStatus, getExportMarkdownUrl, getExportEpubUrl, getExportPdfUrl, approveChapter, getTokenUsage } from '../api';
 
 const PHASE_LABELS = {
   planning: '기획 중...',
@@ -11,6 +11,15 @@ const PHASE_LABELS = {
   resumed: '이어서 진행 중...',
   awaiting_approval: '승인 대기 중...',
   done: '완료!',
+};
+
+const AGENT_LABELS = {
+  planner: '기획',
+  writer: '집필',
+  checker: '검수',
+  refiner: '교정',
+  state_update: '상태',
+  replanner: '재기획',
 };
 
 export default function GenerateTab({ projectId, onDone }) {
@@ -28,14 +37,37 @@ export default function GenerateTab({ projectId, onDone }) {
   const [guidance, setGuidance] = useState('');
   const [approving, setApproving] = useState(false);
 
+  // Token usage
+  const [tokenData, setTokenData] = useState(null);
+
   useEffect(() => {
     getGenerationStatus(projectId).then(d => setStatus(d.status));
+    getTokenUsage(projectId).then(setTokenData).catch(() => {});
     return () => { eventSourceRef.current?.close(); };
   }, [projectId]);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [events]);
+
+  // Reload token data when generation completes
+  useEffect(() => {
+    if (status === 'completed') {
+      getTokenUsage(projectId).then(setTokenData).catch(() => {});
+    }
+  }, [status, projectId]);
+
+  const agentSummary = useMemo(() => {
+    if (!tokenData?.records) return {};
+    const summary = {};
+    tokenData.records.forEach(r => {
+      const agent = r.agent || 'unknown';
+      if (!summary[agent]) summary[agent] = { input: 0, output: 0 };
+      summary[agent].input += r.input_tokens || 0;
+      summary[agent].output += r.output_tokens || 0;
+    });
+    return summary;
+  }, [tokenData]);
 
   const handleStart = async (interactive = true) => {
     setEvents([]);
@@ -46,7 +78,7 @@ export default function GenerateTab({ projectId, onDone }) {
       setStatus('running');
       listenSSE();
     } catch (e) {
-      setEvents([{ type: 'error', message: e.message }]);
+      setEvents([{ type: 'error', text: e.message }]);
     }
   };
 
@@ -158,7 +190,7 @@ export default function GenerateTab({ projectId, onDone }) {
           </div>
         )}
 
-        <div className="flex gap-3">
+        <div className="flex gap-3 flex-wrap">
           {status !== 'running' ? (
             <>
               <button onClick={() => handleStart(true)}
@@ -178,7 +210,15 @@ export default function GenerateTab({ projectId, onDone }) {
           )}
           <a href={getExportMarkdownUrl(projectId)} target="_blank"
             className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition text-sm flex items-center">
-            Markdown 내보내기
+            MD
+          </a>
+          <a href={getExportEpubUrl(projectId)} target="_blank"
+            className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition text-sm flex items-center">
+            EPUB
+          </a>
+          <a href={getExportPdfUrl(projectId)} target="_blank"
+            className="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition text-sm flex items-center">
+            PDF
           </a>
         </div>
       </div>
@@ -237,6 +277,60 @@ export default function GenerateTab({ projectId, onDone }) {
             </div>
           ))}
           <div ref={logEndRef} />
+        </div>
+      )}
+
+      {/* Token usage dashboard */}
+      {tokenData && tokenData.total_input_tokens > 0 && (
+        <div className="bg-white rounded-xl shadow p-6">
+          <h3 className="text-lg font-semibold mb-4">토큰 사용량</h3>
+          <div className="grid grid-cols-3 gap-4 mb-6">
+            <div className="bg-blue-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-blue-600">
+                {(tokenData.total_input_tokens || 0).toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">입력 토큰</div>
+            </div>
+            <div className="bg-green-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-green-600">
+                {(tokenData.total_output_tokens || 0).toLocaleString()}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">출력 토큰</div>
+            </div>
+            <div className="bg-purple-50 rounded-lg p-4 text-center">
+              <div className="text-2xl font-bold text-purple-600">
+                ${tokenData.estimated_cost_usd ?? '—'}
+              </div>
+              <div className="text-xs text-gray-500 mt-1">예상 비용</div>
+            </div>
+          </div>
+
+          {Object.keys(agentSummary).length > 0 && (
+            <>
+              <h4 className="text-sm font-medium text-gray-700 mb-3">에이전트별 사용량</h4>
+              <div className="space-y-2">
+                {Object.entries(agentSummary).map(([agent, counts]) => {
+                  const total = counts.input + counts.output;
+                  const maxTokens = Math.max(...Object.values(agentSummary).map(c => c.input + c.output));
+                  const widthPercent = maxTokens > 0 ? (total / maxTokens) * 100 : 0;
+                  return (
+                    <div key={agent} className="flex items-center gap-3">
+                      <span className="w-20 text-xs text-gray-600 text-right shrink-0">
+                        {AGENT_LABELS[agent] || agent}
+                      </span>
+                      <div className="flex-1 bg-gray-100 rounded-full h-5 overflow-hidden">
+                        <div className="bg-blue-500 h-full rounded-full transition-all"
+                          style={{ width: `${widthPercent}%` }} />
+                      </div>
+                      <span className="text-xs text-gray-500 w-24 text-right shrink-0">
+                        {total.toLocaleString()}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

@@ -16,6 +16,7 @@ async function request(url, options = {}) {
 export const listProjects = () => request(BASE);
 export const createProject = (data) => request(BASE, { method: 'POST', body: JSON.stringify(data) });
 export const getProject = (id) => request(`${BASE}/${id}`);
+export const updateProject = (id, data) => request(`${BASE}/${id}`, { method: 'PUT', body: JSON.stringify(data) });
 export const deleteProject = (id) => request(`${BASE}/${id}`, { method: 'DELETE' });
 
 // Characters
@@ -28,9 +29,29 @@ export const deleteCharacter = (pid, cid) => request(`${BASE}/${pid}/characters/
 export const getSettings = (pid) => request(`${BASE}/${pid}/settings`);
 export const updateSettings = (pid, data) => request(`${BASE}/${pid}/settings`, { method: 'PUT', body: JSON.stringify(data) });
 
+// Foreshadowing
+export const listForeshadowing = (pid) => request(`${BASE}/${pid}/foreshadowing`);
+export const addForeshadowing = (pid, data) => request(`${BASE}/${pid}/foreshadowing`, { method: 'POST', body: JSON.stringify(data) });
+export const updateForeshadowing = (pid, fsId, data) => request(`${BASE}/${pid}/foreshadowing/${fsId}`, { method: 'PUT', body: JSON.stringify(data) });
+export const deleteForeshadowing = (pid, fsId) => request(`${BASE}/${pid}/foreshadowing/${fsId}`, { method: 'DELETE' });
+
 // Outline
 export const getOutline = (pid) => request(`${BASE}/${pid}/outline`);
 export const updateOutline = (pid, data) => request(`${BASE}/${pid}/outline`, { method: 'PUT', body: JSON.stringify(data) });
+
+// Style Reference
+export const getStyleReference = (pid) => request(`${BASE}/${pid}/style-reference`);
+export const uploadStyleReference = async (pid, file) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  const res = await fetch(`${BASE}/${pid}/style-reference`, { method: 'POST', body: formData });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`${res.status}: ${detail}`);
+  }
+  return res.json();
+};
+export const deleteStyleReference = (pid) => request(`${BASE}/${pid}/style-reference`, { method: 'DELETE' });
 
 // Generation
 export const startGeneration = (pid, data) => request(`${BASE}/${pid}/generate`, { method: 'POST', body: JSON.stringify(data) });
@@ -41,9 +62,18 @@ export const approveChapter = (pid, chapterNum, data) => request(`${BASE}/${pid}
 // Chapters
 export const listChapters = (pid) => request(`${BASE}/${pid}/chapters`);
 export const getChapter = (pid, num) => request(`${BASE}/${pid}/chapters/${num}`);
+export const updateChapter = (pid, num, data) => request(`${BASE}/${pid}/chapters/${num}`, { method: 'PUT', body: JSON.stringify(data) });
+export const regenerateChapter = (pid, num, data) => request(`${BASE}/${pid}/chapters/${num}/regenerate`, { method: 'POST', body: JSON.stringify(data) });
+
+// Branches
+export const createBranch = (pid, num, data) => request(`${BASE}/${pid}/chapters/${num}/branch`, { method: 'POST', body: JSON.stringify(data) });
+export const listBranches = (pid, num) => request(`${BASE}/${pid}/chapters/${num}/branches`);
+export const adoptBranch = (pid, num, ver) => request(`${BASE}/${pid}/chapters/${num}/branches/${ver}/adopt`, { method: 'POST' });
 
 // Tokens
 export const getTokenUsage = (pid) => request(`${BASE}/${pid}/tokens`);
 
 // Export
 export const getExportMarkdownUrl = (pid) => `${BASE}/${pid}/export/markdown`;
+export const getExportEpubUrl = (pid) => `${BASE}/${pid}/export/epub`;
+export const getExportPdfUrl = (pid) => `${BASE}/${pid}/export/pdf`;

@@ -36,6 +36,7 @@ class WriterContext:
     open_foreshadowing: list[Foreshadowing]
     world_tone: str
     world_rules: list[str]
+    style_reference: str = ""
     retrieved_memories: list[str] = field(default_factory=list)
 
     def to_prompt_text(self) -> str:
@@ -88,6 +89,12 @@ class WriterContext:
             parts.append("\n## 관련 과거 장면 (메모리)")
             for i, mem in enumerate(self.retrieved_memories, 1):
                 parts.append(f"[{i}] {mem}")
+
+        # Style reference
+        if self.style_reference:
+            # Include up to 2000 chars of the reference
+            ref = self.style_reference[:2000]
+            parts.append(f"\n## 문체 참고\n아래 문체를 참고하여 비슷한 스타일로 작성하세요:\n---\n{ref}\n---")
 
         # Open foreshadowing
         if self.open_foreshadowing:
@@ -167,5 +174,6 @@ async def build_writer_context(
         open_foreshadowing=open_fs,
         world_tone=state.world_setting.tone,
         world_rules=state.world_setting.rules,
+        style_reference=state.style_reference,
         retrieved_memories=retrieved_memories,
     )

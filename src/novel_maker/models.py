@@ -122,6 +122,7 @@ class ChapterResult(BaseModel):
         description="이 장에서 일어난 상태 변화 목록",
     )
     char_count: int = 0
+    version: int = Field(default=1, description="분기 버전 번호")
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +160,18 @@ class NovelState(BaseModel):
     token_usage: dict[str, dict[str, int]] = Field(default_factory=dict)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+
+    # -- Chapter branches --
+    chapter_branches: dict[str, list[ChapterResult]] = Field(
+        default_factory=dict,
+        description="챕터별 분기 버전 (key: 챕터번호 문자열)",
+    )
+
+    # -- Style reference --
+    style_reference: str = Field(
+        default="",
+        description="문체 참고 텍스트 (작가 스타일 샘플)",
+    )
 
     # -- Workflow control --
     phase: Literal[
