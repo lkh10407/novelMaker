@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: novelmaker
+    runtime: python
+    plan: free
+    buildCommand: bash build.sh
+    startCommand: PYTHONPATH=src uvicorn server.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GOOGLE_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: PYTHON_VERSION
+        value: "3.11.11"
+      - key: NODE_VERSION
+        value: "20.18.0"
