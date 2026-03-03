@@ -13,7 +13,6 @@ from collections.abc import Callable
 from pathlib import Path
 
 from google import genai
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .agents.checker import check_chapter
 from .agents.planner import plan_novel
@@ -32,7 +31,7 @@ from .prompts import (
 )
 from .state_manager import StateManager
 from .token_tracker import TokenTracker
-from .utils import parse_json_response
+from .utils import gemini_retry, parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +40,7 @@ logger = logging.getLogger(__name__)
 # Helper: call Gemini for state update extraction
 # ------------------------------------------------------------------
 
-@retry(
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    stop=stop_after_attempt(3),
-    reraise=True,
-)
+@gemini_retry()
 async def _extract_state_changes(
     client: genai.Client,
     chapter_content: str,
@@ -81,11 +76,7 @@ async def _extract_state_changes(
     return parse_json_response(response.text)
 
 
-@retry(
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    stop=stop_after_attempt(3),
-    reraise=True,
-)
+@gemini_retry()
 async def _replan(
     client: genai.Client,
     state: NovelState,

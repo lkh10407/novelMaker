@@ -9,11 +9,11 @@ from __future__ import annotations
 import logging
 
 from google import genai
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..models import CheckResult, NovelState
 from ..prompts import REFINER_SYSTEM, refiner_prompt
 from ..token_tracker import TokenTracker
+from ..utils import gemini_retry
 
 logger = logging.getLogger(__name__)
 
@@ -43,11 +43,7 @@ def _format_revision_history(state: NovelState) -> str:
     return "\n".join(lines)
 
 
-@retry(
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    stop=stop_after_attempt(3),
-    reraise=True,
-)
+@gemini_retry()
 async def refine_chapter(
     client: genai.Client,
     state: NovelState,

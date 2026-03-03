@@ -10,12 +10,11 @@ import json
 import logging
 
 from google import genai
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..models import CheckResult, CheckerError, NovelState
 from ..prompts import CHECKER_SYSTEM, checker_prompt
 from ..token_tracker import TokenTracker
-from ..utils import parse_json_response
+from ..utils import gemini_retry, parse_json_response
 
 logger = logging.getLogger(__name__)
 
@@ -36,11 +35,7 @@ def _format_revision_history(state: NovelState) -> str:
     return "\n".join(lines)
 
 
-@retry(
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    stop=stop_after_attempt(3),
-    reraise=True,
-)
+@gemini_retry()
 async def check_chapter(
     client: genai.Client,
     state: NovelState,

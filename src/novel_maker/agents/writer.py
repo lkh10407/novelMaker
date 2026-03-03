@@ -10,12 +10,12 @@ import logging
 from typing import TYPE_CHECKING
 
 from google import genai
-from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..context_builder import WriterContext, build_writer_context
 from ..models import NovelState
 from ..prompts import WRITER_SYSTEM, writer_prompt
 from ..token_tracker import TokenTracker
+from ..utils import gemini_retry
 
 if TYPE_CHECKING:
     from ..memory import MemoryStore
@@ -23,11 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@retry(
-    wait=wait_exponential(multiplier=1, min=2, max=30),
-    stop=stop_after_attempt(3),
-    reraise=True,
-)
+@gemini_retry()
 async def write_chapter(
     client: genai.Client,
     state: NovelState,
