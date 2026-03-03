@@ -73,22 +73,25 @@ def _make_state(
 
 
 class TestBuildWriterContext:
-    def test_basic_context_build(self):
+    @pytest.mark.asyncio
+    async def test_basic_context_build(self):
         state = _make_state(current_chapter=1)
-        ctx = build_writer_context(state)
+        ctx = await build_writer_context(state)
         assert isinstance(ctx, WriterContext)
         assert ctx.chapter_goal.chapter == 1
         assert ctx.world_tone == "다크"
 
-    def test_filters_involved_characters(self):
+    @pytest.mark.asyncio
+    async def test_filters_involved_characters(self):
         state = _make_state(current_chapter=1, num_characters=5)
-        ctx = build_writer_context(state)
+        ctx = await build_writer_context(state)
         # outline says involved = 캐릭터1, 캐릭터2
         names = {ch.name for ch in ctx.characters}
         assert "캐릭터1" in names
         assert "캐릭터2" in names
 
-    def test_recent_chapters_sliding_window(self):
+    @pytest.mark.asyncio
+    async def test_recent_chapters_sliding_window(self):
         state = _make_state(current_chapter=4, num_chapters_written=3)
         # Ensure outline exists for chapter 4
         state.plot_outline.append(
@@ -97,13 +100,14 @@ class TestBuildWriterContext:
                 involved_characters=["캐릭터1"],
             )
         )
-        ctx = build_writer_context(state)
+        ctx = await build_writer_context(state)
         # Should have last 2 chapters (2, 3)
         assert len(ctx.recent_chapters) == 2
         assert ctx.recent_chapters[0].chapter == 2
         assert ctx.recent_chapters[1].chapter == 3
 
-    def test_older_summary_compression(self):
+    @pytest.mark.asyncio
+    async def test_older_summary_compression(self):
         state = _make_state(current_chapter=4, num_chapters_written=3)
         state.plot_outline.append(
             ChapterOutline(
@@ -111,42 +115,47 @@ class TestBuildWriterContext:
                 involved_characters=["캐릭터1"],
             )
         )
-        ctx = build_writer_context(state)
+        ctx = await build_writer_context(state)
         # Chapter 1 should be compressed into older_summary
         assert "챕터1 요약" in ctx.older_summary
 
-    def test_open_foreshadowing_only(self):
+    @pytest.mark.asyncio
+    async def test_open_foreshadowing_only(self):
         state = _make_state(current_chapter=1)
-        ctx = build_writer_context(state)
+        ctx = await build_writer_context(state)
         # Only unresolved foreshadowing
         assert len(ctx.open_foreshadowing) == 1
         assert ctx.open_foreshadowing[0].description == "복선1"
 
-    def test_ending_hook_from_last_chapter(self):
+    @pytest.mark.asyncio
+    async def test_ending_hook_from_last_chapter(self):
         state = _make_state(current_chapter=2, num_chapters_written=1)
-        ctx = build_writer_context(state)
+        ctx = await build_writer_context(state)
         assert ctx.ending_hook == "챕터1 훅"
 
-    def test_no_outline_raises(self):
+    @pytest.mark.asyncio
+    async def test_no_outline_raises(self):
         state = _make_state(current_chapter=1)
         state.plot_outline = []  # remove all outlines
         with pytest.raises(ValueError, match="No outline found"):
-            build_writer_context(state)
+            await build_writer_context(state)
 
-    def test_to_prompt_text_contains_sections(self):
+    @pytest.mark.asyncio
+    async def test_to_prompt_text_contains_sections(self):
         state = _make_state(current_chapter=2, num_chapters_written=1)
-        ctx = build_writer_context(state)
+        ctx = await build_writer_context(state)
         text = ctx.to_prompt_text()
         assert "## 세계관" in text
         assert "## 등장인물" in text
         assert "## 이번 장 목표" in text
         assert "다크" in text
 
-    def test_fallback_to_all_alive_characters(self):
+    @pytest.mark.asyncio
+    async def test_fallback_to_all_alive_characters(self):
         """If no characters match involved list, fall back to all alive."""
         state = _make_state(current_chapter=1, num_characters=3)
         # Clear involved characters to trigger fallback
         state.plot_outline[0].involved_characters = ["존재하지않는캐릭터"]
         state.plot_outline[0].pov_character = "존재하지않는POV"
-        ctx = build_writer_context(state)
+        ctx = await build_writer_context(state)
         assert len(ctx.characters) == 3  # all alive

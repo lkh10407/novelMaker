@@ -10,6 +10,7 @@ Constructs an optimised context payload for the Writer agent by:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from .models import (
     Character,
@@ -18,6 +19,9 @@ from .models import (
     Foreshadowing,
     NovelState,
 )
+
+if TYPE_CHECKING:
+    from .memory import MemoryStore
 
 
 @dataclass
@@ -32,6 +36,7 @@ class WriterContext:
     open_foreshadowing: list[Foreshadowing]
     world_tone: str
     world_rules: list[str]
+    retrieved_memories: list[str] = field(default_factory=list)
 
     def to_prompt_text(self) -> str:
         """Serialize the context into a prompt-friendly text block."""
@@ -78,6 +83,12 @@ class WriterContext:
         if self.chapter_goal.key_events:
             parts.append("- 핵심 이벤트:\n" + "\n".join(f"  - {e}" for e in self.chapter_goal.key_events))
 
+        # Retrieved memories (RAG)
+        if self.retrieved_memories:
+            parts.append("\n## 관련 과거 장면 (메모리)")
+            for i, mem in enumerate(self.retrieved_memories, 1):
+                parts.append(f"[{i}] {mem}")
+
         # Open foreshadowing
         if self.open_foreshadowing:
             parts.append("\n## 미해결 복선")
@@ -87,7 +98,10 @@ class WriterContext:
         return "\n".join(parts)
 
 
-def build_writer_context(state: NovelState) -> WriterContext:
+async def build_writer_context(
+    state: NovelState,
+    memory_store: MemoryStore | None = None,
+) -> WriterContext:
     """Build an optimised context from the current novel state."""
 
     outline = state.get_current_outline()
@@ -110,10 +124,29 @@ def build_writer_context(state: NovelState) -> WriterContext:
     # 2. Sliding window: last 2 chapters in detail
     recent = state.chapters_written[-2:] if state.chapters_written else []
 
-    # 3. Compress older chapters
+    # 3. Compress older chapters (or use RAG memories instead)
     older = state.chapters_written[:-2] if len(state.chapters_written) > 2 else []
     older_summary = ""
-    if older:
+    retrieved_memories: list[str] = []
+
+    if memory_store is not None and older:
+        # Build semantic query from current chapter outline
+        query_parts = [outline.goal]
+        query_parts.extend(outline.key_events[:3])
+        query_parts.extend(outline.involved_characters[:3])
+        query_texts = [" ".join(query_parts)]
+
+        try:
+            retrieved_memories = await memory_store.query_relevant(
+                query_texts=query_texts,
+                n_results=5,
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning("Memory query failed: %s", e)
+            # Fallback to older summary
+            older_summary = " → ".join(ch.summary for ch in older)
+    elif older:
         older_summary = " → ".join(ch.summary for ch in older)
 
     # 4. Ending hook from the most recent chapter
@@ -134,4 +167,5 @@ def build_writer_context(state: NovelState) -> WriterContext:
         open_foreshadowing=open_fs,
         world_tone=state.world_setting.tone,
         world_rules=state.world_setting.rules,
+        retrieved_memories=retrieved_memories,
     )

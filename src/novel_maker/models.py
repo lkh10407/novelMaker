@@ -168,9 +168,14 @@ class NovelState(BaseModel):
         "refining",
         "updating",
         "replanning",
+        "awaiting_approval",
         "done",
     ] = "planning"
     error_message: str = ""
+    user_guidance: str = Field(
+        default="",
+        description="사용자가 다음 챕터에 반영할 지시사항",
+    )
 
     def get_character_by_name(self, name: str) -> Character | None:
         """Look up a character by name (case-insensitive)."""

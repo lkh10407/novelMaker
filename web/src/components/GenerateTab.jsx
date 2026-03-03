@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { startGeneration, stopGeneration, getGenerationStatus, getExportMarkdownUrl } from '../api';
+import { startGeneration, stopGeneration, getGenerationStatus, getExportMarkdownUrl, approveChapter } from '../api';
 
 const PHASE_LABELS = {
   planning: '기획 중...',
@@ -9,6 +9,7 @@ const PHASE_LABELS = {
   updating_state: '상태 업데이트 중...',
   replanning: '줄거리 재조정 중...',
   resumed: '이어서 진행 중...',
+  awaiting_approval: '승인 대기 중...',
   done: '완료!',
 };
 
@@ -20,6 +21,13 @@ export default function GenerateTab({ projectId, onDone }) {
   const eventSourceRef = useRef(null);
   const logEndRef = useRef(null);
 
+  // HITL approval state
+  const [awaitingApproval, setAwaitingApproval] = useState(false);
+  const [approvalChapter, setApprovalChapter] = useState(0);
+  const [editedContent, setEditedContent] = useState('');
+  const [guidance, setGuidance] = useState('');
+  const [approving, setApproving] = useState(false);
+
   useEffect(() => {
     getGenerationStatus(projectId).then(d => setStatus(d.status));
     return () => { eventSourceRef.current?.close(); };
@@ -29,15 +37,36 @@ export default function GenerateTab({ projectId, onDone }) {
     logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [events]);
 
-  const handleStart = async () => {
+  const handleStart = async (interactive = true) => {
     setEvents([]);
     setCurrentPhase('');
+    setAwaitingApproval(false);
     try {
-      await startGeneration(projectId, { language: 'ko' });
+      await startGeneration(projectId, { language: 'ko', interactive });
       setStatus('running');
       listenSSE();
     } catch (e) {
       setEvents([{ type: 'error', message: e.message }]);
+    }
+  };
+
+  const handleApprove = async (withEdit = false) => {
+    setApproving(true);
+    try {
+      await approveChapter(projectId, approvalChapter, {
+        approved: true,
+        edited_content: withEdit ? editedContent : null,
+        guidance,
+      });
+      setAwaitingApproval(false);
+      setEvents(prev => [...prev, {
+        type: 'phase',
+        text: `${approvalChapter}장 승인됨${guidance ? ' (지시사항 포함)' : ''}`,
+      }]);
+    } catch (e) {
+      setEvents(prev => [...prev, { type: 'error', text: `승인 오류: ${e.message}` }]);
+    } finally {
+      setApproving(false);
     }
   };
 
@@ -57,6 +86,18 @@ export default function GenerateTab({ projectId, onDone }) {
       setEvents(prev => [...prev, {
         type: 'chapter',
         text: `${data.chapter}장 완료 (${data.char_count}자) — ${data.summary}`,
+      }]);
+    });
+
+    es.addEventListener('awaiting_approval', (e) => {
+      const data = JSON.parse(e.data);
+      setApprovalChapter(data.chapter);
+      setEditedContent(data.content || '');
+      setGuidance('');
+      setAwaitingApproval(true);
+      setEvents(prev => [...prev, {
+        type: 'approval',
+        text: `${data.chapter}장 승인 대기 — 검토 후 승인해주세요`,
       }]);
     });
 
@@ -119,10 +160,16 @@ export default function GenerateTab({ projectId, onDone }) {
 
         <div className="flex gap-3">
           {status !== 'running' ? (
-            <button onClick={handleStart}
-              className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition">
-              생성 시작
-            </button>
+            <>
+              <button onClick={() => handleStart(true)}
+                className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition">
+                인터랙티브 생성
+              </button>
+              <button onClick={() => handleStart(false)}
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">
+                자동 생성
+              </button>
+            </>
           ) : (
             <button onClick={handleStop}
               className="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 transition">
@@ -136,6 +183,46 @@ export default function GenerateTab({ projectId, onDone }) {
         </div>
       </div>
 
+      {awaitingApproval && (
+        <div className="bg-white rounded-xl shadow p-6 border-l-4 border-yellow-400">
+          <h3 className="text-lg font-semibold mb-3">{approvalChapter}장 검토</h3>
+
+          <label className="block text-sm font-medium text-gray-700 mb-1">챕터 내용</label>
+          <textarea
+            value={editedContent}
+            onChange={(e) => setEditedContent(e.target.value)}
+            rows={12}
+            className="w-full border rounded-lg p-3 font-mono text-sm mb-4 focus:ring-2 focus:ring-yellow-300 focus:border-yellow-400"
+          />
+
+          <label className="block text-sm font-medium text-gray-700 mb-1">다음 챕터 지시사항 (선택)</label>
+          <textarea
+            value={guidance}
+            onChange={(e) => setGuidance(e.target.value)}
+            rows={3}
+            placeholder="예: 다음 장에서 주인공이 비밀을 밝히게 해주세요..."
+            className="w-full border rounded-lg p-3 text-sm mb-4 focus:ring-2 focus:ring-yellow-300 focus:border-yellow-400"
+          />
+
+          <div className="flex gap-3">
+            <button
+              onClick={() => handleApprove(false)}
+              disabled={approving}
+              className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition disabled:opacity-50"
+            >
+              {approving ? '처리 중...' : '승인'}
+            </button>
+            <button
+              onClick={() => handleApprove(true)}
+              disabled={approving}
+              className="bg-yellow-500 text-white px-6 py-2 rounded-lg hover:bg-yellow-600 transition disabled:opacity-50"
+            >
+              {approving ? '처리 중...' : '편집 후 승인'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {events.length > 0 && (
         <div className="bg-gray-900 text-gray-100 rounded-xl p-4 max-h-96 overflow-y-auto font-mono text-sm">
           {events.map((ev, i) => (
@@ -143,6 +230,7 @@ export default function GenerateTab({ projectId, onDone }) {
               ev.type === 'error' ? 'text-red-400' :
               ev.type === 'done' ? 'text-green-400' :
               ev.type === 'chapter' ? 'text-yellow-300' :
+              ev.type === 'approval' ? 'text-orange-300' :
               'text-gray-300'
             }`}>
               {ev.text}

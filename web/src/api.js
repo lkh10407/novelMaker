@@ -36,6 +36,7 @@ export const updateOutline = (pid, data) => request(`${BASE}/${pid}/outline`, { 
 export const startGeneration = (pid, data) => request(`${BASE}/${pid}/generate`, { method: 'POST', body: JSON.stringify(data) });
 export const stopGeneration = (pid) => request(`${BASE}/${pid}/generate/stop`, { method: 'POST' });
 export const getGenerationStatus = (pid) => request(`${BASE}/${pid}/generate/status`);
+export const approveChapter = (pid, chapterNum, data) => request(`${BASE}/${pid}/generate/approve/${chapterNum}`, { method: 'POST', body: JSON.stringify(data) });
 
 // Chapters
 export const listChapters = (pid) => request(`${BASE}/${pid}/chapters`);

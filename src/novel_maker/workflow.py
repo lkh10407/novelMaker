@@ -6,6 +6,7 @@ re-planning, state validation, and checkpoint persistence.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Callable
@@ -160,6 +161,12 @@ class NovelPipeline:
         self.on_phase_change: Callable | None = None
         self.on_chapter_complete: Callable | None = None
 
+        # HITL: approval queue for interactive mode
+        self.approval_queue: asyncio.Queue | None = None
+
+        # RAG: long-term memory store
+        self.memory_store = None  # MemoryStore | None
+
     def _notify(self, phase: str, **kwargs):
         if self.on_phase_change:
             self.on_phase_change(phase, **kwargs)
@@ -217,6 +224,7 @@ class NovelPipeline:
         # ---- Phase 2: Chapter loop ----
         while state.current_chapter <= state.total_chapters:
             ch_num = state.current_chapter
+            outline = state.get_current_outline()
             logger.info("=== Chapter %d/%d ===", ch_num, state.total_chapters)
 
             # -- Write --
@@ -228,6 +236,7 @@ class NovelPipeline:
                 state=state,
                 model=self.model,
                 tracker=self.tracker,
+                memory_store=self.memory_store,
             )
             state.current_draft = draft
             state.revision_count = 0
@@ -335,8 +344,56 @@ class NovelPipeline:
                 encoding="utf-8",
             )
 
+            # -- Store chapter in RAG memory --
+            if self.memory_store is not None:
+                try:
+                    involved = (
+                        [outline.pov_character] + list(outline.involved_characters)
+                        if outline else []
+                    )
+                    await self.memory_store.store_chapter(
+                        chapter_num=ch_num,
+                        content=chapter_result.content,
+                        characters=involved,
+                        events=chapter_result.state_changes,
+                    )
+                except Exception as e:
+                    logger.warning("Memory store failed for chapter %d: %s", ch_num, e)
+
             if self.on_chapter_complete:
                 self.on_chapter_complete(ch_num, chapter_result)
+
+            # -- HITL: await user approval if interactive mode --
+            if self.approval_queue is not None and state.current_chapter <= state.total_chapters:
+                state.phase = "awaiting_approval"
+                self._notify(
+                    "awaiting_approval",
+                    chapter=ch_num,
+                    content=chapter_result.content,
+                    summary=chapter_result.summary,
+                )
+                logger.info("Chapter %d: awaiting user approval", ch_num)
+                approval = await self.approval_queue.get()
+
+                # Apply user edits if provided
+                if approval.get("edited_content"):
+                    edited = approval["edited_content"]
+                    chapter_result.content = edited
+                    chapter_result.char_count = len(edited)
+                    # Update stored chapter and file
+                    state.chapters_written[-1] = chapter_result
+                    ch_path = self.output_dir / f"chapter_{ch_num:02d}.md"
+                    ch_path.write_text(
+                        f"# {ch_num}장\n\n{edited}",
+                        encoding="utf-8",
+                    )
+                    logger.info("Chapter %d: user edited content applied", ch_num)
+
+                # Store user guidance for next chapter
+                guidance = approval.get("guidance", "")
+                state.user_guidance = guidance
+                if guidance:
+                    logger.info("Chapter %d: user guidance for next chapter: %s", ch_num, guidance[:80])
 
             # -- Re-plan check --
             if (

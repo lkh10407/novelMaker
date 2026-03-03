@@ -25,12 +25,20 @@ logger = logging.getLogger(__name__)
 # Track running generation tasks
 _running_tasks: dict[str, asyncio.Task] = {}
 _progress_queues: dict[str, asyncio.Queue] = {}
+_approval_queues: dict[str, asyncio.Queue] = {}
 
 
 class GenerateRequest(BaseModel):
     total_chapters: int | None = None
     model: str | None = None
     language: str = "ko"
+    interactive: bool = True
+
+
+class ApprovalRequest(BaseModel):
+    approved: bool = True
+    edited_content: str | None = None
+    guidance: str = ""
 
 
 @router.post("/{project_id}/generate")
@@ -54,6 +62,12 @@ async def start_generation(project_id: str, req: GenerateRequest):
     queue: asyncio.Queue = asyncio.Queue()
     _progress_queues[project_id] = queue
 
+    # Create approval queue for interactive mode
+    approval_queue: asyncio.Queue | None = None
+    if req.interactive:
+        approval_queue = asyncio.Queue()
+        _approval_queues[project_id] = approval_queue
+
     async def run_pipeline():
         try:
             from google import genai
@@ -66,9 +80,22 @@ async def start_generation(project_id: str, req: GenerateRequest):
                 output_dir=output_dir,
             )
 
+            # Wire HITL approval queue
+            if approval_queue is not None:
+                pipeline.approval_queue = approval_queue
+
+            # Initialize RAG memory store
+            from novel_maker.memory import MemoryStore
+            pipeline.memory_store = MemoryStore(
+                project_dir=Path(f"data/projects/{project_id}"),
+                client=client,
+            )
+
             # Wire up progress callbacks
             def on_phase_change(phase: str, **kwargs):
-                event = {"type": "phase", "phase": phase, **kwargs}
+                # Send awaiting_approval as its own SSE event type
+                event_type = "awaiting_approval" if phase == "awaiting_approval" else "phase"
+                event = {"type": event_type, "phase": phase, **kwargs}
                 try:
                     queue.put_nowait(event)
                 except asyncio.QueueFull:
@@ -118,6 +145,7 @@ async def start_generation(project_id: str, req: GenerateRequest):
             queue.put_nowait({"type": "error", "message": str(e)})
         finally:
             queue.put_nowait({"type": "end"})
+            _approval_queues.pop(project_id, None)
 
     task = asyncio.create_task(run_pipeline())
     _running_tasks[project_id] = task
@@ -160,7 +188,27 @@ async def stop_generation(project_id: str):
     task.cancel()
     _running_tasks.pop(project_id, None)
     _progress_queues.pop(project_id, None)
+    _approval_queues.pop(project_id, None)
     return {"status": "stopped"}
+
+
+@router.post("/{project_id}/generate/approve/{chapter_num}")
+async def approve_chapter(project_id: str, chapter_num: int, req: ApprovalRequest):
+    """Approve (or edit) a chapter and resume generation."""
+    approval_queue = _approval_queues.get(project_id)
+    if approval_queue is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No pending approval for this project",
+        )
+
+    approval_data = {
+        "approved": req.approved,
+        "edited_content": req.edited_content,
+        "guidance": req.guidance,
+    }
+    await approval_queue.put(approval_data)
+    return {"status": "approved", "chapter": chapter_num}
 
 
 @router.get("/{project_id}/generate/status")

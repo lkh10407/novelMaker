@@ -6,3 +6,4 @@ tenacity
 fastapi>=0.115
 uvicorn[standard]
 sse-starlette
+chromadb
