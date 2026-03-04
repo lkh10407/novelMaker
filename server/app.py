@@ -23,7 +23,7 @@ app = FastAPI(
 # CORS for Vite dev server
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -39,12 +39,12 @@ app.include_router(export.router, prefix="/api/projects", tags=["Export"])
 app.include_router(collab.router, tags=["Collaboration"])
 
 
-# Serve built frontend (production)
-_web_dist = Path(__file__).resolve().parent.parent / "web" / "dist"
-if _web_dist.exists():
-    app.mount("/", StaticFiles(directory=str(_web_dist), html=True), name="frontend")
-
-
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+# Serve built frontend (production) — MUST be last (catch-all)
+_web_dist = Path(__file__).resolve().parent.parent / "web" / "dist"
+if _web_dist.exists():
+    app.mount("/", StaticFiles(directory=str(_web_dist), html=True), name="frontend")

@@ -1,0 +1,199 @@
+/* NovelMaker Obsidian Plugin Styles */
+
+.novel-maker-view {
+  padding: 12px;
+}
+
+.novel-maker-header h3 {
+  margin: 0 0 12px 0;
+  font-size: 1.2em;
+}
+
+.novel-maker-section {
+  margin-bottom: 16px;
+}
+
+.novel-maker-section h4 {
+  margin: 0 0 8px 0;
+  font-size: 0.95em;
+  color: var(--text-muted);
+}
+
+/* Dropdown */
+.novel-maker-dropdown {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-size: 0.9em;
+  margin-bottom: 12px;
+}
+
+/* Buttons */
+.novel-maker-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+
+.novel-maker-btn {
+  padding: 6px 14px;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85em;
+  font-weight: 500;
+  transition: opacity 0.15s;
+}
+
+.novel-maker-btn:hover {
+  opacity: 0.85;
+}
+
+.novel-maker-btn-green {
+  background: #16a34a;
+  color: white;
+}
+
+.novel-maker-btn-blue {
+  background: #2563eb;
+  color: white;
+}
+
+.novel-maker-btn-red {
+  background: #dc2626;
+  color: white;
+}
+
+.novel-maker-btn-yellow {
+  background: #eab308;
+  color: white;
+}
+
+.novel-maker-btn-gray {
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+}
+
+.novel-maker-btn-sm {
+  padding: 4px 10px;
+  font-size: 0.8em;
+  background: var(--background-modifier-border);
+  color: var(--text-normal);
+}
+
+.novel-maker-btn-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.novel-maker-export-row {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* Log */
+.novel-maker-log {
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 8px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-family: var(--font-monospace);
+  font-size: 0.8em;
+}
+
+.novel-maker-log-entry {
+  padding: 2px 0;
+  line-height: 1.4;
+}
+
+.novel-maker-log-error {
+  color: #ef4444;
+}
+
+.novel-maker-log-done {
+  color: #22c55e;
+}
+
+.novel-maker-log-chapter {
+  color: #eab308;
+}
+
+.novel-maker-log-approval {
+  color: #f97316;
+}
+
+.novel-maker-log-phase {
+  color: var(--text-muted);
+}
+
+/* Approval panel */
+.novel-maker-approval {
+  background: var(--background-primary);
+  border-left: 4px solid #eab308;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 16px;
+}
+
+.novel-maker-approval h4 {
+  margin: 0 0 8px 0;
+}
+
+.novel-maker-label {
+  display: block;
+  font-size: 0.85em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.novel-maker-textarea {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 4px;
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-monospace);
+  font-size: 0.85em;
+  resize: vertical;
+  min-height: 60px;
+  margin-bottom: 8px;
+}
+
+.novel-maker-textarea-lg {
+  min-height: 200px;
+}
+
+/* Token usage */
+.novel-maker-token-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.novel-maker-token-box {
+  background: var(--background-secondary);
+  border-radius: 6px;
+  padding: 10px 6px;
+  text-align: center;
+}
+
+.novel-maker-token-value {
+  font-size: 1.1em;
+  font-weight: 700;
+  color: var(--text-accent);
+}
+
+.novel-maker-token-label {
+  font-size: 0.7em;
+  color: var(--text-muted);
+  margin-top: 2px;
+}

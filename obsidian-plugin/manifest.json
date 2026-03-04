@@ -1,0 +1,9 @@
+{
+  "id": "novel-maker",
+  "name": "NovelMaker",
+  "version": "1.0.0",
+  "minAppVersion": "1.0.0",
+  "description": "AI 멀티 에이전트 소설 자동 집필 시스템 — NovelMaker 서버와 연동하여 Obsidian에서 소설을 관리합니다.",
+  "author": "NovelMaker",
+  "isDesktopOnly": true
+}
