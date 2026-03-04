@@ -43,7 +43,10 @@ export default function GenerateTab({ projectId, onDone }) {
   useEffect(() => {
     getGenerationStatus(projectId).then(d => setStatus(d.status));
     getTokenUsage(projectId).then(setTokenData).catch(() => {});
-    return () => { eventSourceRef.current?.close(); };
+    return () => {
+      eventSourceRef.current?.close();
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    };
   }, [projectId]);
 
   useEffect(() => {
@@ -102,7 +105,14 @@ export default function GenerateTab({ projectId, onDone }) {
     }
   };
 
+  const reconnectTimerRef = useRef(null);
+
   const listenSSE = () => {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+
     const es = new EventSource(`/api/projects/${projectId}/generate/stream`);
     eventSourceRef.current = es;
 
@@ -141,17 +151,20 @@ export default function GenerateTab({ projectId, onDone }) {
       }]);
       setStatus('completed');
       setCurrentPhase('done');
+      es.close();
       onDone?.();
     });
 
     es.addEventListener('error', (e) => {
       try {
         const data = JSON.parse(e.data);
-        setEvents(prev => [...prev, { type: 'error', text: `오류: ${data.message}` }]);
-      } catch {
-        setEvents(prev => [...prev, { type: 'error', text: '연결 오류' }]);
-      }
-      setStatus('idle');
+        if (data.message) {
+          setEvents(prev => [...prev, { type: 'error', text: `오류: ${data.message}` }]);
+          setStatus('idle');
+          es.close();
+          return;
+        }
+      } catch { /* connection error, not a data error */ }
     });
 
     es.addEventListener('end', () => {
@@ -159,8 +172,31 @@ export default function GenerateTab({ projectId, onDone }) {
       setStatus(prev => prev === 'running' ? 'completed' : prev);
     });
 
+    // Ignore ping heartbeats (keep-alive)
+    es.addEventListener('ping', () => {});
+
     es.onerror = () => {
       es.close();
+      // Auto-reconnect: check if generation is still running
+      reconnectTimerRef.current = setTimeout(async () => {
+        try {
+          const s = await getGenerationStatus(projectId);
+          if (s.status === 'running') {
+            setEvents(prev => [...prev, { type: 'phase', text: '연결 재시도 중...' }]);
+            listenSSE();
+          } else if (s.status === 'completed') {
+            setStatus('completed');
+            setCurrentPhase('done');
+            setEvents(prev => [...prev, { type: 'done', text: '생성 완료! (연결 복구 후 확인)' }]);
+            onDone?.();
+          } else {
+            setStatus('idle');
+          }
+        } catch {
+          setStatus('idle');
+          setEvents(prev => [...prev, { type: 'error', text: '서버 연결 실패' }]);
+        }
+      }, 3000);
     };
   };
 

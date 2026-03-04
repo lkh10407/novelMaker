@@ -163,17 +163,23 @@ async def stream_progress(project_id: str):
     async def event_generator():
         try:
             while True:
-                event = await asyncio.wait_for(queue.get(), timeout=120)
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30)
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield {"event": "ping", "data": "{}"}
+                    continue
                 yield {
                     "event": event.get("type", "message"),
                     "data": json.dumps(event, ensure_ascii=False),
                 }
                 if event.get("type") == "end":
                     break
-        except asyncio.TimeoutError:
-            yield {"event": "timeout", "data": "{}"}
+        except Exception:
+            pass
         finally:
-            _progress_queues.pop(project_id, None)
+            # Don't remove queue here — allow reconnection
+            pass
 
     return EventSourceResponse(event_generator())
 
