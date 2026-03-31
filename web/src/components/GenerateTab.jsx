@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { startGeneration, stopGeneration, getGenerationStatus, getExportMarkdownUrl, getExportEpubUrl, getExportPdfUrl, approveChapter, getTokenUsage } from '../api';
+import { startGeneration, resumeGeneration, stopGeneration, getGenerationStatus, getExportMarkdownUrl, getExportEpubUrl, getExportPdfUrl, approveChapter, getTokenUsage } from '../api';
 
 const PHASE_LABELS = {
   planning: '기획 중...',
@@ -24,6 +24,7 @@ const AGENT_LABELS = {
 
 export default function GenerateTab({ projectId, onDone }) {
   const [status, setStatus] = useState('idle');
+  const [interruptedInfo, setInterruptedInfo] = useState(null);
   const [events, setEvents] = useState([]);
   const [currentPhase, setCurrentPhase] = useState('');
   const [currentChapter, setCurrentChapter] = useState(0);
@@ -41,7 +42,12 @@ export default function GenerateTab({ projectId, onDone }) {
   const [tokenData, setTokenData] = useState(null);
 
   useEffect(() => {
-    getGenerationStatus(projectId).then(d => setStatus(d.status));
+    getGenerationStatus(projectId).then(d => {
+      setStatus(d.status);
+      if (d.status === 'interrupted') {
+        setInterruptedInfo({ chapter: d.current_chapter, total: d.total_chapters });
+      }
+    });
     getTokenUsage(projectId).then(setTokenData).catch(() => {});
     return () => {
       eventSourceRef.current?.close();
@@ -71,6 +77,20 @@ export default function GenerateTab({ projectId, onDone }) {
     });
     return summary;
   }, [tokenData]);
+
+  const handleResume = async (interactive = true) => {
+    setEvents([]);
+    setCurrentPhase('');
+    setAwaitingApproval(false);
+    setInterruptedInfo(null);
+    try {
+      await resumeGeneration(projectId, { language: 'ko', interactive });
+      setStatus('running');
+      listenSSE();
+    } catch (e) {
+      setEvents([{ type: 'error', text: e.message }]);
+    }
+  };
 
   const handleStart = async (interactive = true) => {
     setEvents([]);
@@ -226,8 +246,29 @@ export default function GenerateTab({ projectId, onDone }) {
           </div>
         )}
 
+        {status === 'interrupted' && interruptedInfo && (
+          <div className="mb-4 p-3 bg-yellow-50 text-yellow-800 rounded-lg">
+            중단된 생성이 감지되었습니다 ({interruptedInfo.chapter}장/{interruptedInfo.total}장)
+          </div>
+        )}
+
         <div className="flex gap-3 flex-wrap">
-          {status !== 'running' ? (
+          {status === 'interrupted' ? (
+            <>
+              <button onClick={() => handleResume(true)}
+                className="bg-yellow-500 text-white px-6 py-2 rounded-lg hover:bg-yellow-600 transition">
+                이어서 생성 ({interruptedInfo?.chapter}장부터)
+              </button>
+              <button onClick={() => handleResume(false)}
+                className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 transition">
+                이어서 자동 생성
+              </button>
+              <button onClick={() => handleStart(true)}
+                className="bg-gray-400 text-white px-6 py-2 rounded-lg hover:bg-gray-500 transition">
+                처음부터 생성
+              </button>
+            </>
+          ) : status !== 'running' ? (
             <>
               <button onClick={() => handleStart(true)}
                 className="bg-green-600 text-white px-6 py-2 rounded-lg hover:bg-green-700 transition">

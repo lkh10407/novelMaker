@@ -55,6 +55,7 @@ export const deleteStyleReference = (pid) => request(`${BASE}/${pid}/style-refer
 
 // Generation
 export const startGeneration = (pid, data) => request(`${BASE}/${pid}/generate`, { method: 'POST', body: JSON.stringify(data) });
+export const resumeGeneration = (pid, data) => request(`${BASE}/${pid}/generate/resume`, { method: 'POST', body: JSON.stringify(data) });
 export const stopGeneration = (pid) => request(`${BASE}/${pid}/generate/stop`, { method: 'POST' });
 export const getGenerationStatus = (pid) => request(`${BASE}/${pid}/generate/status`);
 export const approveChapter = (pid, chapterNum, data) => request(`${BASE}/${pid}/generate/approve/${chapterNum}`, { method: 'POST', body: JSON.stringify(data) });
@@ -77,3 +78,12 @@ export const getTokenUsage = (pid) => request(`${BASE}/${pid}/tokens`);
 export const getExportMarkdownUrl = (pid) => `${BASE}/${pid}/export/markdown`;
 export const getExportEpubUrl = (pid) => `${BASE}/${pid}/export/epub`;
 export const getExportPdfUrl = (pid) => `${BASE}/${pid}/export/pdf`;
+
+// Media (YouTube Video)
+export const listVoices = (pid) => request(`${BASE}/${pid}/media/voices`);
+export const startMediaGeneration = (pid, data) => request(`${BASE}/${pid}/media/generate`, { method: 'POST', body: JSON.stringify(data) });
+export const stopMediaGeneration = (pid) => request(`${BASE}/${pid}/media/stop`, { method: 'POST' });
+export const getMediaStatus = (pid) => request(`${BASE}/${pid}/media/status`);
+export const getMediaDownloadUrl = (pid) => `${BASE}/${pid}/media/download`;
+export const getChapterVideoUrl = (pid, ch) => `${BASE}/${pid}/media/download/${ch}`;
+export const getChapterAudioUrl = (pid, ch) => `${BASE}/${pid}/media/download-audio/${ch}`;
