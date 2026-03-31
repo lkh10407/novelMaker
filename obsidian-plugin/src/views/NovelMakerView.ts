@@ -30,6 +30,12 @@ export class NovelMakerView extends ItemView {
   private approvalContainer!: HTMLDivElement;
   private tokenContainer!: HTMLDivElement;
 
+  // Media state
+  private mediaContainer!: HTMLDivElement;
+  private mediaStatus: "idle" | "running" | "ready" = "idle";
+  private mediaSseController: AbortController | null = null;
+  private selectedVoice = "ko-KR-SunHiNeural";
+
   // HITL state
   private awaitingApproval = false;
   private approvalChapter = 0;
@@ -86,16 +92,22 @@ export class NovelMakerView extends ItemView {
     logSection.createEl("h4", { text: "로그" });
     this.logContainer = logSection.createDiv("novel-maker-log");
 
+    // Media (YouTube video) section
+    this.mediaContainer = container.createDiv("novel-maker-section");
+    this.renderMediaSection();
+
     // Token usage
     this.tokenContainer = container.createDiv("novel-maker-section");
     this.tokenContainer.style.display = "none";
 
     // Load initial status
     await this.refreshStatus();
+    await this.refreshMediaStatus();
   }
 
   async onClose(): Promise<void> {
     this.sseController?.abort();
+    this.mediaSseController?.abort();
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
   }
 
@@ -505,5 +517,140 @@ export class NovelMakerView extends ItemView {
     const entry = this.logContainer.createDiv(`novel-maker-log-entry novel-maker-log-${type}`);
     entry.setText(text);
     this.logContainer.scrollTop = this.logContainer.scrollHeight;
+  }
+
+  // ---- Media (YouTube Video) ----
+
+  private renderMediaSection(): void {
+    this.mediaContainer.empty();
+    this.mediaContainer.createEl("h4", { text: "YouTube 영상 생성" });
+
+    if (this.mediaStatus === "running") {
+      const stopBtn = this.mediaContainer.createEl("button", {
+        text: "영상 생성 중단",
+        cls: "novel-maker-btn novel-maker-btn-red",
+      });
+      stopBtn.addEventListener("click", () => this.handleMediaStop());
+      return;
+    }
+
+    // Voice selector
+    const voiceRow = this.mediaContainer.createDiv("novel-maker-media-row");
+    voiceRow.createEl("label", { text: "음성: ", cls: "novel-maker-label" });
+    const voiceSelect = voiceRow.createEl("select", { cls: "novel-maker-dropdown" });
+    for (const [id, name] of [
+      ["ko-KR-SunHiNeural", "선희 (여성)"],
+      ["ko-KR-InJoonNeural", "인준 (남성)"],
+      ["ko-KR-HyunsuMultilingualNeural", "현수 (남성, 다국어)"],
+    ]) {
+      const opt = voiceSelect.createEl("option", { text: name, value: id });
+      opt.value = id;
+    }
+    voiceSelect.value = this.selectedVoice;
+    voiceSelect.addEventListener("change", () => {
+      this.selectedVoice = voiceSelect.value;
+    });
+
+    // Generate button
+    const genBtn = this.mediaContainer.createEl("button", {
+      text: "영상 생성",
+      cls: "novel-maker-btn novel-maker-btn-blue",
+    });
+    genBtn.addEventListener("click", () => this.handleMediaStart());
+
+    // Download buttons (if ready)
+    if (this.mediaStatus === "ready") {
+      const dlRow = this.mediaContainer.createDiv("novel-maker-export-row");
+      const dlBtn = dlRow.createEl("button", {
+        text: "영상 다운로드",
+        cls: "novel-maker-btn novel-maker-btn-green",
+      });
+      dlBtn.addEventListener("click", () => {
+        const pid = this.getProjectId();
+        if (pid) window.open(this.plugin.api.getMediaDownloadUrl(pid));
+      });
+    }
+  }
+
+  private async handleMediaStart(): Promise<void> {
+    const pid = this.getProjectId();
+    if (!pid) return;
+
+    try {
+      await this.plugin.api.startMediaGeneration(pid, {
+        voice: this.selectedVoice,
+      });
+      this.mediaStatus = "running";
+      this.renderMediaSection();
+      this.listenMediaSSE();
+      this.addLog("phase", "YouTube 영상 생성을 시작합니다");
+    } catch (e) {
+      this.addLog("error", `영상 생성 오류: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  private async handleMediaStop(): Promise<void> {
+    const pid = this.getProjectId();
+    if (!pid) return;
+
+    try {
+      await this.plugin.api.stopMediaGeneration(pid);
+      this.mediaSseController?.abort();
+      this.mediaStatus = "idle";
+      this.renderMediaSection();
+      this.addLog("error", "영상 생성이 중단되었습니다");
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  private listenMediaSSE(): void {
+    const pid = this.getProjectId();
+    if (!pid) return;
+
+    this.mediaSseController = this.plugin.api.streamMediaGeneration(pid, {
+      onPhase: (data) => {
+        this.addLog("phase", data.message || `${data.phase} ${data.chapter ? data.chapter + "장" : ""}`);
+      },
+      onChapterComplete: (data) => {
+        this.addLog("chapter", `${data.chapter}장 영상 완료 (${data.duration}초)`);
+      },
+      onDone: (data) => {
+        this.addLog("done", `영상 생성 완료! ${data.duration}초, ${data.file_size_mb}MB, ${data.chapters_processed}챕터`);
+        this.mediaStatus = "ready";
+        this.renderMediaSection();
+      },
+      onError: (data) => {
+        this.addLog("error", `영상 오류: ${data.message}`);
+        this.mediaStatus = "idle";
+        this.renderMediaSection();
+      },
+      onDisconnect: () => {
+        if (this.mediaStatus === "running") {
+          this.mediaStatus = "idle";
+          this.renderMediaSection();
+        }
+      },
+    });
+  }
+
+  private async refreshMediaStatus(): Promise<void> {
+    const pid = this.getProjectId();
+    if (!pid) return;
+
+    try {
+      const s = await this.plugin.api.getMediaStatus(pid);
+      if (s.status === "running") {
+        this.mediaStatus = "running";
+        this.listenMediaSSE();
+      } else if (s.status === "ready" || s.status === "completed") {
+        this.mediaStatus = "ready";
+      } else {
+        this.mediaStatus = "idle";
+      }
+      this.renderMediaSection();
+    } catch {
+      // Server not reachable
+    }
   }
 }

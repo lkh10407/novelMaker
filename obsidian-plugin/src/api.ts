@@ -15,11 +15,18 @@ import type {
   Project,
   GenerationStatus,
   TokenUsage,
+  MediaGenerateRequest,
+  MediaStatus,
+  MediaVoice,
   SSEPhaseEvent,
   SSEChapterCompleteEvent,
   SSEAwaitingApprovalEvent,
   SSEDoneEvent,
   SSEErrorEvent,
+  SSEMediaPhaseEvent,
+  SSEMediaChapterCompleteEvent,
+  SSEMediaDoneEvent,
+  SSEMediaErrorEvent,
 } from "./types";
 
 export class NovelMakerAPI {
@@ -244,6 +251,134 @@ export class NovelMakerAPI {
 
   getExportPdfUrl(pid: string): string {
     return `${this.serverUrl}/api/projects/${pid}/export/pdf`;
+  }
+
+  // ---- Media (YouTube Video) ----
+
+  async listVoices(pid: string): Promise<MediaVoice[]> {
+    return this.request(`/api/projects/${pid}/media/voices`);
+  }
+
+  async startMediaGeneration(pid: string, data: MediaGenerateRequest): Promise<void> {
+    await this.request(`/api/projects/${pid}/media/generate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async stopMediaGeneration(pid: string): Promise<void> {
+    await this.request(`/api/projects/${pid}/media/stop`, { method: "POST" });
+  }
+
+  async getMediaStatus(pid: string): Promise<MediaStatus> {
+    return this.request(`/api/projects/${pid}/media/status`);
+  }
+
+  getMediaDownloadUrl(pid: string): string {
+    return `${this.serverUrl}/api/projects/${pid}/media/download`;
+  }
+
+  getChapterVideoDownloadUrl(pid: string, chapter: number): string {
+    return `${this.serverUrl}/api/projects/${pid}/media/download/${chapter}`;
+  }
+
+  getChapterAudioDownloadUrl(pid: string, chapter: number): string {
+    return `${this.serverUrl}/api/projects/${pid}/media/download-audio/${chapter}`;
+  }
+
+  streamMediaGeneration(
+    pid: string,
+    callbacks: {
+      onPhase?: (data: SSEMediaPhaseEvent) => void;
+      onChapterComplete?: (data: SSEMediaChapterCompleteEvent) => void;
+      onDone?: (data: SSEMediaDoneEvent) => void;
+      onError?: (data: SSEMediaErrorEvent) => void;
+      onDisconnect?: () => void;
+    },
+  ): AbortController {
+    const controller = new AbortController();
+    const url = `${this.serverUrl}/api/projects/${pid}/media/stream`;
+
+    this._connectMediaSSE(url, controller, callbacks);
+    return controller;
+  }
+
+  private async _connectMediaSSE(
+    url: string,
+    controller: AbortController,
+    callbacks: Parameters<NovelMakerAPI["streamMediaGeneration"]>[1],
+  ): Promise<void> {
+    try {
+      const response = await fetch(url, {
+        signal: controller.signal,
+        headers: { Accept: "text/event-stream" },
+      });
+
+      if (!response.ok || !response.body) {
+        callbacks.onError?.({ message: `Media SSE failed: ${response.status}` });
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        let currentEvent = "";
+        let currentData = "";
+
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            currentEvent = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            currentData = line.slice(5).trim();
+          } else if (line === "" && currentEvent && currentData) {
+            this._handleMediaSSEEvent(currentEvent, currentData, callbacks);
+            currentEvent = "";
+            currentData = "";
+          }
+        }
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.name === "AbortError") return;
+      callbacks.onDisconnect?.();
+    }
+  }
+
+  private _handleMediaSSEEvent(
+    event: string,
+    data: string,
+    callbacks: Parameters<NovelMakerAPI["streamMediaGeneration"]>[1],
+  ): void {
+    if (event === "ping") return;
+    try {
+      const parsed = JSON.parse(data);
+      switch (event) {
+        case "media_phase":
+          callbacks.onPhase?.(parsed);
+          break;
+        case "media_chapter_complete":
+          callbacks.onChapterComplete?.(parsed);
+          break;
+        case "media_done":
+          callbacks.onDone?.(parsed);
+          break;
+        case "media_error":
+          callbacks.onError?.(parsed);
+          break;
+        case "end":
+          break;
+      }
+    } catch {
+      // Ignore malformed JSON
+    }
   }
 
   // ---- WebSocket Collaboration ----

@@ -81,6 +81,16 @@ export default class NovelMakerPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "export-video",
+      name: "내보내기 (YouTube 영상)",
+      callback: () => {
+        if (this.settings.projectId) {
+          window.open(this.api.getMediaDownloadUrl(this.settings.projectId));
+        }
+      },
+    });
+
+    this.addCommand({
       id: "connect-collab",
       name: "실시간 협업 연결",
       callback: () => this.connectCollab(),

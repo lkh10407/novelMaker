@@ -109,6 +109,50 @@ export interface SSEErrorEvent {
   message: string;
 }
 
+// Media generation types
+export interface MediaGenerateRequest {
+  voice?: string;
+  background_color?: string;
+  background_image_url?: string | null;
+  subtitle_font_size?: number;
+  subtitle_color?: string;
+  include_title_cards?: boolean;
+  chapters?: number[] | null;
+}
+
+export interface MediaStatus {
+  status: "idle" | "running" | "completed" | "ready";
+  file_size_mb?: number;
+}
+
+export interface MediaVoice {
+  id: string;
+  name: string;
+}
+
+export interface SSEMediaPhaseEvent {
+  phase: string;
+  chapter?: number;
+  progress?: number;
+  message?: string;
+}
+
+export interface SSEMediaChapterCompleteEvent {
+  chapter: number;
+  duration: number;
+  progress: number;
+}
+
+export interface SSEMediaDoneEvent {
+  duration: number;
+  file_size_mb: number;
+  chapters_processed: number;
+}
+
+export interface SSEMediaErrorEvent {
+  message: string;
+}
+
 export interface NovelMakerSettings {
   serverUrl: string;
   projectId: string;

@@ -76,8 +76,9 @@ gcloud run deploy "$SERVICE_NAME" \
   --platform managed \
   --allow-unauthenticated \
   --set-env-vars "GOOGLE_API_KEY=$GOOGLE_API_KEY,GEMINI_MODEL=$GEMINI_MODEL" \
-  --memory 512Mi \
-  --cpu 1 \
+  --memory 1Gi \
+  --cpu 2 \
+  --timeout 900 \
   --min-instances 0 \
   --max-instances 2 \
   --quiet
