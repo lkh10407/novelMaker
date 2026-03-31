@@ -10,9 +10,11 @@ SERVICE_NAME="novelmaker"
 GEMINI_MODEL="${GEMINI_MODEL:-gemini-2.5-flash}"
 
 # gcloud 경로 (brew 설치 시)
+set +u
 if [ -f "$(brew --prefix 2>/dev/null)/share/google-cloud-sdk/path.zsh.inc" ]; then
   source "$(brew --prefix)/share/google-cloud-sdk/path.zsh.inc"
 fi
+set -u
 
 # ─── 사전 검사 ───
 if ! command -v gcloud &>/dev/null; then
