@@ -18,7 +18,8 @@ const PHASE_LABELS: Record<string, string> = {
 
 export class NovelMakerView extends ItemView {
   plugin: NovelMakerPlugin;
-  private status: "idle" | "running" | "completed" = "idle";
+  private status: "idle" | "running" | "completed" | "interrupted" = "idle";
+  private interruptedInfo: { chapter?: number; total?: number } = {};
   private sseController: AbortController | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -112,10 +113,10 @@ export class NovelMakerView extends ItemView {
       const projects: Project[] = await this.plugin.api.listProjects();
       for (const p of projects) {
         const opt = this.projectDropdown.createEl("option", {
-          text: p.name,
-          value: p.id,
+          text: p.title,
+          value: p.project_id,
         });
-        opt.value = p.id;
+        opt.value = p.project_id;
       }
       this.projectDropdown.value = this.plugin.settings.projectId;
     } catch {
@@ -128,7 +129,26 @@ export class NovelMakerView extends ItemView {
   private renderControls(): void {
     this.controlsContainer.empty();
 
-    if (this.status !== "running") {
+    if (this.status === "interrupted") {
+      const info = this.interruptedInfo;
+      const resumeBtn = this.controlsContainer.createEl("button", {
+        text: `이어서 생성 (${info.chapter ?? "?"}장부터)`,
+        cls: "novel-maker-btn novel-maker-btn-yellow",
+      });
+      resumeBtn.addEventListener("click", () => this.handleResume(true));
+
+      const resumeAutoBtn = this.controlsContainer.createEl("button", {
+        text: "이어서 자동 생성",
+        cls: "novel-maker-btn novel-maker-btn-blue",
+      });
+      resumeAutoBtn.addEventListener("click", () => this.handleResume(false));
+
+      const restartBtn = this.controlsContainer.createEl("button", {
+        text: "처음부터 생성",
+        cls: "novel-maker-btn novel-maker-btn-gray",
+      });
+      restartBtn.addEventListener("click", () => this.handleStart(true));
+    } else if (this.status !== "running") {
       const interactiveBtn = this.controlsContainer.createEl("button", {
         text: "인터랙티브 생성",
         cls: "novel-maker-btn novel-maker-btn-green",
@@ -194,6 +214,25 @@ export class NovelMakerView extends ItemView {
       this.listenSSE();
     } catch (e) {
       this.addLog("error", `시작 오류: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  private async handleResume(interactive: boolean): Promise<void> {
+    const pid = this.getProjectId();
+    if (!pid) return;
+
+    this.logContainer.empty();
+    try {
+      await this.plugin.api.resumeGeneration(pid, {
+        language: this.plugin.settings.language,
+        interactive,
+      });
+      this.status = "running";
+      this.renderControls();
+      this.listenSSE();
+      this.addLog("phase", "중단된 생성을 이어서 진행합니다");
+    } catch (e) {
+      this.addLog("error", `재개 오류: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -425,16 +464,28 @@ export class NovelMakerView extends ItemView {
     if (!pid) return;
 
     try {
-      const s = await this.plugin.api.getGenerationStatus(pid);
-      this.status = s.status === "running" ? "running" : s.status === "completed" ? "completed" : "idle";
-      this.renderControls();
-
-      if (this.status === "running") {
+      const s = await this.plugin.api.getGenerationStatus(pid) as {
+        status: string;
+        current_chapter?: number;
+        total_chapters?: number;
+      };
+      if (s.status === "running") {
+        this.status = "running";
         this.listenSSE();
-      }
-      if (this.status === "completed") {
+      } else if (s.status === "completed") {
+        this.status = "completed";
         this.loadTokenUsage();
+      } else if (s.status === "interrupted") {
+        this.status = "interrupted";
+        this.interruptedInfo = {
+          chapter: s.current_chapter,
+          total: s.total_chapters,
+        };
+        this.addLog("phase", `중단된 생성이 감지됨 (${s.current_chapter}장/${s.total_chapters}장)`);
+      } else {
+        this.status = "idle";
       }
+      this.renderControls();
     } catch {
       // Server not reachable
     }

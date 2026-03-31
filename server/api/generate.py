@@ -250,14 +250,152 @@ async def update_chapter(project_id: str, chapter_num: int, req: ChapterUpdateRe
 
 @router.get("/{project_id}/generate/status")
 async def generation_status(project_id: str):
-    """Check generation status."""
+    """Check generation status.
+
+    Also checks persisted state phase for cases where the server
+    restarted and in-memory task was lost.
+    """
     task = _running_tasks.get(project_id)
-    if task is None:
-        return {"status": "idle"}
-    if task.done():
-        _running_tasks.pop(project_id, None)
-        return {"status": "completed"}
-    return {"status": "running"}
+    if task is not None:
+        if task.done():
+            _running_tasks.pop(project_id, None)
+            return {"status": "completed"}
+        return {"status": "running"}
+
+    # Check persisted state for resumable generation
+    state = load_state(project_id)
+    if state is not None and state.phase not in ("planning", "done"):
+        return {
+            "status": "interrupted",
+            "phase": state.phase,
+            "current_chapter": state.current_chapter,
+            "total_chapters": state.total_chapters,
+        }
+    return {"status": "idle"}
+
+
+@router.post("/{project_id}/generate/resume")
+async def resume_generation(project_id: str, req: GenerateRequest):
+    """Resume an interrupted generation from the last checkpoint.
+
+    This is useful after a server restart when an in-memory task was lost
+    but the state was saved to disk with chapters already written.
+    """
+    state = load_state(project_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    if state.phase == "done":
+        raise HTTPException(status_code=400, detail="Generation already completed")
+
+    if not state.chapters_written and not state.characters:
+        raise HTTPException(status_code=400, detail="No progress to resume — use /generate instead")
+
+    if project_id in _running_tasks and not _running_tasks[project_id].done():
+        raise HTTPException(status_code=409, detail="Generation already in progress")
+
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="GOOGLE_API_KEY not configured")
+
+    model = req.model or os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    total_chapters = req.total_chapters or state.total_chapters or 3
+
+    queue: asyncio.Queue = asyncio.Queue()
+    _progress_queues[project_id] = queue
+
+    approval_queue: asyncio.Queue | None = None
+    if req.interactive:
+        approval_queue = asyncio.Queue()
+        _approval_queues[project_id] = approval_queue
+
+    async def run_resume():
+        try:
+            from google import genai
+            client = genai.Client(api_key=api_key)
+            output_dir = get_output_dir(project_id)
+
+            pipeline = NovelPipeline(
+                client=client,
+                model=model,
+                output_dir=output_dir,
+            )
+
+            if approval_queue is not None:
+                pipeline.approval_queue = approval_queue
+
+            from novel_maker.memory import MemoryStore
+            pipeline.memory_store = MemoryStore(
+                project_dir=Path(f"data/projects/{project_id}"),
+                client=client,
+            )
+
+            def on_phase_change(phase: str, **kwargs):
+                event_type = "awaiting_approval" if phase == "awaiting_approval" else "phase"
+                event = {"type": event_type, "phase": phase, **kwargs}
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    pass
+
+            def on_chapter_complete(ch_num, result):
+                event = {
+                    "type": "chapter_complete",
+                    "chapter": ch_num,
+                    "summary": result.summary,
+                    "char_count": result.char_count,
+                }
+                try:
+                    queue.put_nowait(event)
+                except asyncio.QueueFull:
+                    pass
+
+            pipeline.on_phase_change = on_phase_change
+            pipeline.on_chapter_complete = on_chapter_complete
+
+            current_state = load_state(project_id)
+            meta_path = Path(f"data/projects/{project_id}/meta.json")
+            logline = ""
+            if meta_path.exists():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                logline = meta.get("logline", "")
+
+            queue.put_nowait({
+                "type": "phase",
+                "phase": "resumed",
+                "chapter": current_state.current_chapter,
+            })
+
+            final_state = await pipeline.run(
+                logline=logline,
+                total_chapters=total_chapters,
+                language=req.language,
+                existing_state=current_state,
+            )
+
+            save_state(project_id, final_state)
+
+            queue.put_nowait({
+                "type": "done",
+                "total_tokens": pipeline.tracker.total_tokens,
+                "cost_usd": round(pipeline.tracker.estimated_cost_usd, 4),
+            })
+
+        except Exception as e:
+            logger.exception("Resume failed for %s", project_id)
+            queue.put_nowait({"type": "error", "message": str(e)})
+        finally:
+            queue.put_nowait({"type": "end"})
+            _approval_queues.pop(project_id, None)
+
+    task = asyncio.create_task(run_resume())
+    _running_tasks[project_id] = task
+
+    return {
+        "status": "resumed",
+        "project_id": project_id,
+        "from_chapter": state.current_chapter,
+    }
 
 
 class RegenerateRequest(BaseModel):

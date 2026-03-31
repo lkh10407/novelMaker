@@ -119,7 +119,8 @@ export class NovelMakerAPI {
 
   // ---- Outline ----
   async getOutline(pid: string): Promise<ChapterOutline[]> {
-    return this.request(`/api/projects/${pid}/outline`);
+    const resp = await this.request<{ total_chapters: number; outline: ChapterOutline[] }>(`/api/projects/${pid}/outline`);
+    return resp.outline;
   }
 
   async updateOutline(pid: string, data: ChapterOutline[]): Promise<ChapterOutline[]> {
@@ -201,6 +202,13 @@ export class NovelMakerAPI {
     });
   }
 
+  async resumeGeneration(pid: string, data: { language?: string; interactive?: boolean }): Promise<void> {
+    await this.request(`/api/projects/${pid}/generate/resume`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   async stopGeneration(pid: string): Promise<void> {
     await this.request(`/api/projects/${pid}/generate/stop`, { method: "POST" });
   }
@@ -236,6 +244,84 @@ export class NovelMakerAPI {
 
   getExportPdfUrl(pid: string): string {
     return `${this.serverUrl}/api/projects/${pid}/export/pdf`;
+  }
+
+  // ---- WebSocket Collaboration ----
+
+  /**
+   * Connect to the collaboration WebSocket for a project.
+   * Returns the WebSocket instance for external management.
+   */
+  connectCollab(
+    pid: string,
+    callbacks: {
+      onInit?: (data: { locks: Record<string, { user_id: string }>; users: string[] }) => void;
+      onUserJoined?: (data: { user_id: string; users: string[] }) => void;
+      onUserLeft?: (data: { user_id: string; users: string[] }) => void;
+      onChapterLocked?: (data: { chapter: number; user_id: string }) => void;
+      onChapterUnlocked?: (data: { chapter: number }) => void;
+      onChapterUpdated?: (data: { chapter: number; user_id: string; char_count: number; summary: string }) => void;
+      onLockAcquired?: (data: { chapter: number }) => void;
+      onLockDenied?: (data: { chapter: number; locked_by: string }) => void;
+      onDisconnect?: () => void;
+    },
+  ): WebSocket {
+    const wsUrl = this.serverUrl.replace(/^http/, "ws") + `/ws/${pid}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        switch (data.type) {
+          case "init":
+            callbacks.onInit?.(data);
+            break;
+          case "user_joined":
+            callbacks.onUserJoined?.(data);
+            break;
+          case "user_left":
+            callbacks.onUserLeft?.(data);
+            break;
+          case "chapter_locked":
+            callbacks.onChapterLocked?.(data);
+            break;
+          case "chapter_unlocked":
+            callbacks.onChapterUnlocked?.(data);
+            break;
+          case "chapter_updated":
+            callbacks.onChapterUpdated?.(data);
+            break;
+          case "lock_acquired":
+            callbacks.onLockAcquired?.(data);
+            break;
+          case "lock_denied":
+            callbacks.onLockDenied?.(data);
+            break;
+        }
+      } catch {
+        // Ignore malformed messages
+      }
+    };
+
+    ws.onclose = () => callbacks.onDisconnect?.();
+    ws.onerror = () => callbacks.onDisconnect?.();
+
+    return ws;
+  }
+
+  /** Send a lock request via WebSocket. */
+  static sendLock(ws: WebSocket, chapter: number): void {
+    ws.send(JSON.stringify({ action: "lock", chapter }));
+  }
+
+  /** Send an unlock request via WebSocket. */
+  static sendUnlock(ws: WebSocket, chapter: number): void {
+    ws.send(JSON.stringify({ action: "unlock", chapter }));
+  }
+
+  /** Send a save (with content) via WebSocket. */
+  static sendSave(ws: WebSocket, chapter: number, content: string, summary: string = ""): void {
+    ws.send(JSON.stringify({ action: "save", chapter, content, summary }));
   }
 
   // ---- SSE Streaming ----

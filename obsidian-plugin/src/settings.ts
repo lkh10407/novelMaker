@@ -54,7 +54,7 @@ export class NovelMakerSettingTab extends PluginSettingTab {
         try {
           const projects: Project[] = await this.plugin.api.listProjects();
           for (const p of projects) {
-            dropdown.addOption(p.id, p.name);
+            dropdown.addOption(p.project_id, p.title);
           }
         } catch {
           // Server might not be reachable

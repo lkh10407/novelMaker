@@ -55,12 +55,12 @@ export interface CheckResult {
 }
 
 export interface Project {
-  id: string;
-  name: string;
+  project_id: string;
+  title: string;
   logline: string;
   total_chapters: number;
-  created_at: string;
-  updated_at: string;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface GenerationStatus {
