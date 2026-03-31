@@ -68,7 +68,7 @@ class CollabRoom:
 
     async def broadcast(self, message: dict, exclude: str | None = None):
         dead: list[str] = []
-        for uid, ws in self.connections.items():
+        for uid, ws in list(self.connections.items()):
             if uid == exclude:
                 continue
             try:
