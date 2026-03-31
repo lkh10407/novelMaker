@@ -1,16 +1,20 @@
 /**
  * VaultSync — synchronizes server data to/from Obsidian vault.
- * Phase 3 will implement the full pullAll() and Phase 5 adds push methods.
+ *
+ * Each project gets its own folder: NovelMaker/{프로젝트명}/
+ * On sync, existing files are cleaned and recreated from server state.
  */
 
-import { App, TFile, normalizePath } from "obsidian";
+import { App, TFile, TFolder, normalizePath } from "obsidian";
 import type { NovelMakerAPI } from "./api";
+import type { Project } from "./types";
 
-const VAULT_FOLDER = "NovelMaker";
+const ROOT_FOLDER = "NovelMaker";
 
 export class VaultSync {
   /** Tracks file write timestamps to prevent sync loops */
   private lastSyncTimestamps = new Map<string, number>();
+  private currentProjectFolder = "";
 
   constructor(
     private app: App,
@@ -18,13 +22,34 @@ export class VaultSync {
   ) {}
 
   async pullAll(projectId: string): Promise<void> {
-    // Will be implemented in Phase 3
-    const basePath = normalizePath(VAULT_FOLDER);
+    // Get project info for folder name
+    let project: Project;
+    try {
+      project = await this.api.getProject(projectId);
+    } catch {
+      // Fallback to ID if project fetch fails
+      project = { project_id: projectId, title: projectId } as Project;
+    }
+
+    const projectFolder = this.sanitizeFolderName(project.title || projectId);
+    const basePath = normalizePath(`${ROOT_FOLDER}/${projectFolder}`);
+    this.currentProjectFolder = basePath;
+
+    // Ensure base folders
+    await this.ensureFolder(ROOT_FOLDER);
     await this.ensureFolder(basePath);
-    await this.ensureFolder(`${basePath}/등장인물`);
-    await this.ensureFolder(`${basePath}/줄거리`);
-    await this.ensureFolder(`${basePath}/챕터`);
-    await this.ensureFolder(`${basePath}/복선`);
+
+    const subfolders = ["등장인물", "줄거리", "챕터", "복선"];
+    for (const sub of subfolders) {
+      await this.ensureFolder(`${basePath}/${sub}`);
+    }
+
+    // Clean existing files in subfolders before syncing
+    for (const sub of subfolders) {
+      await this.cleanFolder(`${basePath}/${sub}`);
+    }
+    // Also clean the world setting file
+    await this.deleteFileIfExists(`${basePath}/세계관.md`);
 
     // Pull world setting
     const settings = await this.api.getSettings(projectId);
@@ -56,7 +81,7 @@ export class VaultSync {
         `**위치**: ${ch.location || "미정"}`,
         "",
         ch.inventory.length > 0
-          ? `## 소지품\n${ch.inventory.map((i) => `- ${i}`).join("\n")}`
+          ? `## 소지품\n${ch.inventory.map((i: string) => `- ${i}`).join("\n")}`
           : "",
         "",
         relationships ? `## 관계\n${relationships}` : "",
@@ -82,10 +107,10 @@ export class VaultSync {
         `**시점**: [[${ol.pov_character}]]`,
         "",
         "## 주요 이벤트",
-        ...ol.key_events.map((e) => `- ${e}`),
+        ...ol.key_events.map((e: string) => `- ${e}`),
         "",
         "## 등장인물",
-        ...ol.involved_characters.map((c) => `- [[${c}]]`),
+        ...ol.involved_characters.map((c: string) => `- [[${c}]]`),
       ].join("\n");
 
       await this.writeFile(`${basePath}/줄거리/${ol.chapter}장 개요.md`, content);
@@ -144,25 +169,16 @@ export class VaultSync {
 
   // ---- Push methods (Vault → Server) ----
 
-  /**
-   * Push chapter changes from Vault to server.
-   * Reads YAML frontmatter to find chapter number, then sends content update.
-   */
   async pushChapterChanges(projectId: string, file: TFile): Promise<void> {
     const content = await this.app.vault.read(file);
     const fm = this.parseFrontmatter(content);
     const chapterNum = fm?.chapter;
     if (!chapterNum) return;
 
-    // Extract body (after frontmatter + "# N장" header)
     const body = this.extractBody(content);
-    await this.api.updateChapter(projectId, chapterNum, { content: body });
+    await this.api.updateChapter(projectId, chapterNum as number, { content: body });
   }
 
-  /**
-   * Push character changes from Vault to server.
-   * Reads YAML frontmatter to find character id, then sends updates.
-   */
   async pushCharacterChanges(projectId: string, file: TFile): Promise<void> {
     const content = await this.app.vault.read(file);
     const fm = this.parseFrontmatter(content);
@@ -174,21 +190,21 @@ export class VaultSync {
     if (fm.location) updates.location = fm.location;
     if (fm.traits) updates.traits = fm.traits;
 
-    await this.api.updateCharacter(projectId, charId, updates);
+    await this.api.updateCharacter(projectId, charId as number, updates);
   }
 
   /** Check if a file is inside the NovelMaker vault folder */
   isNovelMakerFile(path: string): boolean {
-    return path.startsWith(VAULT_FOLDER + "/");
+    return path.startsWith(ROOT_FOLDER + "/");
   }
 
   /** Determine which sub-folder a file belongs to */
   getFileCategory(path: string): "chapter" | "character" | "outline" | "foreshadowing" | "world" | null {
-    if (path.startsWith(`${VAULT_FOLDER}/챕터/`)) return "chapter";
-    if (path.startsWith(`${VAULT_FOLDER}/등장인물/`)) return "character";
-    if (path.startsWith(`${VAULT_FOLDER}/줄거리/`)) return "outline";
-    if (path.startsWith(`${VAULT_FOLDER}/복선/`)) return "foreshadowing";
-    if (path === `${VAULT_FOLDER}/세계관.md`) return "world";
+    if (path.includes("/챕터/")) return "chapter";
+    if (path.includes("/등장인물/")) return "character";
+    if (path.includes("/줄거리/")) return "outline";
+    if (path.includes("/복선/")) return "foreshadowing";
+    if (path.endsWith("세계관.md")) return "world";
     return null;
   }
 
@@ -201,6 +217,11 @@ export class VaultSync {
 
   // ---- Helpers ----
 
+  private sanitizeFolderName(name: string): string {
+    // Remove characters not safe for folder names
+    return name.replace(/[\\/:*?"<>|]/g, "_").trim() || "unnamed";
+  }
+
   private parseFrontmatter(content: string): Record<string, unknown> | null {
     const match = content.match(/^---\n([\s\S]*?)\n---/);
     if (!match) return null;
@@ -211,11 +232,9 @@ export class VaultSync {
       if (colonIdx === -1) continue;
       const key = line.slice(0, colonIdx).trim();
       let value: string | number | boolean = line.slice(colonIdx + 1).trim();
-      // Remove quotes
       if (value.startsWith('"') && value.endsWith('"')) {
         value = value.slice(1, -1);
       }
-      // Parse numbers and booleans
       if (/^\d+$/.test(String(value))) value = parseInt(String(value), 10);
       if (value === "true") value = true;
       if (value === "false") value = false;
@@ -225,9 +244,7 @@ export class VaultSync {
   }
 
   private extractBody(content: string): string {
-    // Remove frontmatter
     let body = content.replace(/^---\n[\s\S]*?\n---\n*/, "");
-    // Remove "# N장" header
     body = body.replace(/^#\s+\d+장\s*\n*/, "");
     return body.trim();
   }
@@ -253,8 +270,35 @@ export class VaultSync {
   }
 
   private async ensureFolder(path: string): Promise<void> {
-    if (!this.app.vault.getAbstractFileByPath(path)) {
-      await this.app.vault.createFolder(path);
+    const normalized = normalizePath(path);
+    if (!this.app.vault.getAbstractFileByPath(normalized)) {
+      await this.app.vault.createFolder(normalized);
+    }
+  }
+
+  /** Delete all .md files in a folder (clean before re-sync) */
+  private async cleanFolder(path: string): Promise<void> {
+    const normalized = normalizePath(path);
+    const folder = this.app.vault.getAbstractFileByPath(normalized);
+    if (!(folder instanceof TFolder)) return;
+
+    const filesToDelete: TFile[] = [];
+    for (const child of folder.children) {
+      if (child instanceof TFile && child.extension === "md") {
+        filesToDelete.push(child);
+      }
+    }
+
+    for (const file of filesToDelete) {
+      await this.app.vault.delete(file);
+    }
+  }
+
+  private async deleteFileIfExists(path: string): Promise<void> {
+    const normalized = normalizePath(path);
+    const file = this.app.vault.getAbstractFileByPath(normalized);
+    if (file instanceof TFile) {
+      await this.app.vault.delete(file);
     }
   }
 
