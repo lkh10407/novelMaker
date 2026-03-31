@@ -35,6 +35,41 @@ async def list_voices():
     ]
 
 
+@router.get("/{project_id}/media/debug")
+async def media_debug(project_id: str):
+    """Debug endpoint: check ffmpeg capabilities."""
+    import asyncio as _asyncio
+    import shutil as _shutil
+
+    ffmpeg_path = _shutil.which("ffmpeg") or "ffmpeg"
+    proc = await _asyncio.create_subprocess_exec(
+        ffmpeg_path, "-filters",
+        stdout=_asyncio.subprocess.PIPE,
+        stderr=_asyncio.subprocess.PIPE,
+    )
+    stdout, _ = await proc.communicate()
+    filters_text = stdout.decode("utf-8", errors="replace")
+
+    has_ass = "ass" in filters_text
+    has_subtitles = "subtitles" in filters_text
+    has_drawtext = "drawtext" in filters_text
+
+    # Check output dir
+    output_dir = get_output_dir(project_id)
+    media_dir = output_dir / "media"
+    media_files = []
+    if media_dir.exists():
+        media_files = [f.name for f in media_dir.iterdir()]
+
+    return {
+        "ffmpeg_path": ffmpeg_path,
+        "has_ass_filter": has_ass,
+        "has_subtitles_filter": has_subtitles,
+        "has_drawtext_filter": has_drawtext,
+        "media_files": media_files,
+    }
+
+
 @router.post("/{project_id}/media/generate")
 async def start_media_generation(project_id: str, req: MediaGenerateRequest):
     """Start media (audio + video) generation in the background."""

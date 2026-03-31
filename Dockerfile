@@ -13,7 +13,11 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     fonts-noto-cjk \
     ffmpeg \
+    libass-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Verify ffmpeg has subtitle support
+RUN ffmpeg -filters 2>&1 | grep -E "ass|subtitles|drawtext" || echo "WARNING: subtitle filters not available"
 
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
