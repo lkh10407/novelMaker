@@ -77,7 +77,7 @@ gcloud run deploy "$SERVICE_NAME" \
   --region "$REGION" \
   --platform managed \
   --allow-unauthenticated \
-  --set-env-vars "GOOGLE_API_KEY=$GOOGLE_API_KEY,GEMINI_MODEL=$GEMINI_MODEL" \
+  --set-env-vars "GOOGLE_API_KEY=$GOOGLE_API_KEY,GEMINI_MODEL=$GEMINI_MODEL,STORAGE_BACKEND=gcs,GCS_BUCKET_NAME=novelmaker-data" \
   --memory 2Gi \
   --cpu 2 \
   --timeout 900 \

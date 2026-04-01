@@ -45,6 +45,16 @@ class StorageBackend(ABC):
     def mkdir(self, path: str) -> None: ...
 
     @abstractmethod
+    def write_binary(self, path: str, local_file: Path) -> None:
+        """Upload a binary file from local filesystem."""
+        ...
+
+    @abstractmethod
+    def download_binary(self, path: str, local_dest: Path) -> Path:
+        """Download a binary file to local filesystem."""
+        ...
+
+    @abstractmethod
     def get_local_path(self, path: str) -> Path:
         """Return a local filesystem path (for tools that need it)."""
         ...
@@ -82,6 +92,18 @@ class LocalStorage(StorageBackend):
 
     def mkdir(self, path: str) -> None:
         (self.base / path).mkdir(parents=True, exist_ok=True)
+
+    def write_binary(self, path: str, local_file: Path) -> None:
+        """Copy binary file into storage (local = just copy)."""
+        import shutil
+        dest = self.base / path
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        if str(local_file) != str(dest):
+            shutil.copy2(local_file, dest)
+
+    def download_binary(self, path: str, local_dest: Path) -> Path:
+        """For local storage, just return the path."""
+        return self.base / path
 
     def get_local_path(self, path: str) -> Path:
         fp = self.base / path
@@ -135,13 +157,26 @@ class GCSStorage(StorageBackend):
     def mkdir(self, path: str) -> None:
         pass  # GCS doesn't need explicit directory creation
 
+    def write_binary(self, path: str, local_file: Path) -> None:
+        """Upload a binary file (mp3, mp4, epub, pdf, etc.) to GCS."""
+        blob = self.bucket.blob(self._blob_path(path))
+        blob.upload_from_filename(str(local_file))
+
+    def download_binary(self, path: str, local_dest: Path) -> Path:
+        """Download a binary file from GCS to local path."""
+        local_dest.parent.mkdir(parents=True, exist_ok=True)
+        blob = self.bucket.blob(self._blob_path(path))
+        if blob.exists():
+            blob.download_to_filename(str(local_dest))
+        return local_dest
+
     def get_local_path(self, path: str) -> Path:
-        """Download to local cache and return path. For tools needing filesystem."""
+        """Return a local filesystem path, downloading from GCS if needed."""
         local = self._local_cache / path
         local.parent.mkdir(parents=True, exist_ok=True)
-        if self.exists(path):
-            content = self.read_file(path)
-            local.write_text(content, encoding="utf-8")
+        if self.exists(path) and not local.exists():
+            blob = self.bucket.blob(self._blob_path(path))
+            blob.download_to_filename(str(local))
         return local
 
 

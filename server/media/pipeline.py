@@ -23,6 +23,9 @@ from .video import (
     get_audio_duration,
 )
 
+# Import storage backend for syncing media to GCS
+from ..storage import _backend as storage_backend
+
 logger = logging.getLogger(__name__)
 
 TITLE_CARD_DURATION = 4.0  # seconds
@@ -170,11 +173,29 @@ async def run_media_pipeline(
     if options.include_title_cards:
         total_duration += len(chapters) * TITLE_CARD_DURATION
 
-    # Cleanup intermediate files (keep final video + per-chapter audio)
+    # Cleanup intermediate files (keep final video + per-chapter audio/video)
     for f in media_dir.glob("title_*.mp4"):
         f.unlink(missing_ok=True)
     for f in media_dir.glob("concat_list.txt"):
         f.unlink(missing_ok=True)
+
+    # Sync media files to persistent storage (GCS)
+    _emit({"type": "media_phase", "phase": "uploading", "message": "파일 저장 중..."})
+    try:
+        project_id = output_dir.name if output_dir.name != "output" else output_dir.parent.name
+        # Upload final video
+        storage_backend.write_binary(f"{project_id}/output/novel_video.mp4", final_path)
+        # Upload per-chapter files
+        for cr in chapter_results:
+            ch_num = cr.chapter
+            ch_video = media_dir / f"chapter_{ch_num:02d}.mp4"
+            ch_audio = media_dir / f"chapter_{ch_num:02d}.mp3"
+            if ch_video.exists():
+                storage_backend.write_binary(f"{project_id}/output/media/chapter_{ch_num:02d}.mp4", ch_video)
+            if ch_audio.exists():
+                storage_backend.write_binary(f"{project_id}/output/media/chapter_{ch_num:02d}.mp3", ch_audio)
+    except Exception as e:
+        logger.warning("Failed to sync media to storage backend: %s", e)
 
     result = MediaResult(
         video_path=str(final_path),
