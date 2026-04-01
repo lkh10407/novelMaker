@@ -109,6 +109,48 @@ export interface SSEErrorEvent {
   message: string;
 }
 
+// Animation storyboard & dialogue types
+export interface StoryboardScene {
+  chapter: number;
+  scene_number: number;
+  visual_description: string;
+  image_prompt: string;
+  camera_angle: string;
+  characters_present: string[];
+  key_actions: string[];
+  mood: string;
+  duration_seconds: number;
+}
+
+export interface DialogueLine {
+  chapter: number;
+  scene_number: number;
+  speaker: string;
+  text: string;
+  emotion: string;
+  direction: string;
+}
+
+export interface AnimationStatus {
+  status: "idle" | "running" | "completed" | "ready";
+  scene_count?: number;
+  line_count?: number;
+}
+
+export interface SSEAnimPhaseEvent {
+  phase: string;
+  chapter?: number;
+  progress?: number;
+  message?: string;
+}
+
+export interface SSEAnimDoneEvent {
+  total_scenes: number;
+  total_lines: number;
+  total_tokens: number;
+  cost_usd: number;
+}
+
 // Media generation types
 export interface MediaGenerateRequest {
   voice?: string;

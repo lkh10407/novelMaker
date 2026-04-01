@@ -104,6 +104,35 @@ class CheckResult(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Animation storyboard & dialogue
+# ---------------------------------------------------------------------------
+
+class StoryboardScene(BaseModel):
+    """A single keyframe scene for animation production."""
+
+    chapter: int
+    scene_number: int
+    visual_description: str = Field(description="장면의 시각적 묘사 (한국어)")
+    image_prompt: str = Field(description="이미지 생성 AI용 영문 프롬프트")
+    camera_angle: str = Field(description="카메라 앵글 (close-up, wide shot, etc.)")
+    characters_present: list[str] = Field(default_factory=list)
+    key_actions: list[str] = Field(default_factory=list)
+    mood: str = Field(default="", description="분위기 (긴장, 서정, 코믹 등)")
+    duration_seconds: float = Field(default=3.0, description="예상 장면 길이")
+
+
+class DialogueLine(BaseModel):
+    """A single line of narration or character dialogue."""
+
+    chapter: int
+    scene_number: int
+    speaker: str = Field(description="'해설' 또는 캐릭터명")
+    text: str = Field(description="대사/나레이션 텍스트")
+    emotion: str = Field(default="neutral", description="감정 톤")
+    direction: str = Field(default="", description="연기 지시 (속삭이듯, 단호하게 등)")
+
+
+# ---------------------------------------------------------------------------
 # Chapter result
 # ---------------------------------------------------------------------------
 
@@ -160,6 +189,16 @@ class NovelState(BaseModel):
     token_usage: dict[str, dict[str, int]] = Field(default_factory=dict)
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+
+    # -- Animation --
+    storyboard: list[StoryboardScene] = Field(
+        default_factory=list,
+        description="스토리보드 장면 목록",
+    )
+    dialogue_script: list[DialogueLine] = Field(
+        default_factory=list,
+        description="나레이션/대사 대본",
+    )
 
     # -- Chapter branches --
     chapter_branches: dict[str, list[ChapterResult]] = Field(

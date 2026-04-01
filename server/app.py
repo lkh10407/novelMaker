@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from .api import projects, characters, settings, outline, generate, export, collab, media
+from .api import projects, characters, settings, outline, generate, export, collab, media, animation
 
 app = FastAPI(
     title="NovelMaker API",
@@ -37,6 +37,7 @@ app.include_router(outline.router, prefix="/api/projects", tags=["Outline"])
 app.include_router(generate.router, prefix="/api/projects", tags=["Generate"])
 app.include_router(export.router, prefix="/api/projects", tags=["Export"])
 app.include_router(media.router, prefix="/api/projects", tags=["Media"])
+app.include_router(animation.router, prefix="/api/projects", tags=["Animation"])
 app.include_router(collab.router, tags=["Collaboration"])
 
 

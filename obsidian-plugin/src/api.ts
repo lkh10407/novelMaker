@@ -7,6 +7,9 @@
 
 import { requestUrl, RequestUrlParam } from "obsidian";
 import type {
+  StoryboardScene,
+  DialogueLine,
+  AnimationStatus,
   Character,
   WorldSetting,
   ChapterOutline,
@@ -251,6 +254,39 @@ export class NovelMakerAPI {
 
   getExportPdfUrl(pid: string): string {
     return `${this.serverUrl}/api/projects/${pid}/export/pdf`;
+  }
+
+  // ---- Animation (Storyboard + Dialogue) ----
+
+  async startAnimationGeneration(pid: string, data: { chapters?: number[] | null }): Promise<void> {
+    await this.request(`/api/projects/${pid}/animation/generate`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async stopAnimationGeneration(pid: string): Promise<void> {
+    await this.request(`/api/projects/${pid}/animation/stop`, { method: "POST" });
+  }
+
+  async getAnimationStatus(pid: string): Promise<AnimationStatus> {
+    return this.request(`/api/projects/${pid}/animation/status`);
+  }
+
+  async listStoryboard(pid: string): Promise<StoryboardScene[]> {
+    return this.request(`/api/projects/${pid}/storyboard`);
+  }
+
+  async getChapterStoryboard(pid: string, chapter: number): Promise<StoryboardScene[]> {
+    return this.request(`/api/projects/${pid}/storyboard/${chapter}`);
+  }
+
+  async listDialogue(pid: string): Promise<DialogueLine[]> {
+    return this.request(`/api/projects/${pid}/dialogue`);
+  }
+
+  async getChapterDialogue(pid: string, chapter: number): Promise<DialogueLine[]> {
+    return this.request(`/api/projects/${pid}/dialogue/${chapter}`);
   }
 
   // ---- Media (YouTube Video) ----

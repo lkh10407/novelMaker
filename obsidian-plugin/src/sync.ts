@@ -39,7 +39,7 @@ export class VaultSync {
     await this.ensureFolder(ROOT_FOLDER);
     await this.ensureFolder(basePath);
 
-    const subfolders = ["등장인물", "줄거리", "챕터", "복선"];
+    const subfolders = ["등장인물", "줄거리", "챕터", "복선", "스토리보드", "대본"];
     for (const sub of subfolders) {
       await this.ensureFolder(`${basePath}/${sub}`);
     }
@@ -164,6 +164,84 @@ export class VaultSync {
         .join("\n");
 
       await this.writeFile(`${basePath}/복선/복선${fs.id}.md`, content);
+    }
+
+    // Pull storyboard scenes
+    try {
+      const storyboard = await this.api.listStoryboard(projectId);
+      for (const scene of storyboard) {
+        const content = [
+          "---",
+          `chapter: ${scene.chapter}`,
+          `scene_number: ${scene.scene_number}`,
+          `camera_angle: "${scene.camera_angle}"`,
+          `mood: "${scene.mood}"`,
+          `duration_seconds: ${scene.duration_seconds}`,
+          "---",
+          "",
+          `# ${scene.chapter}장 장면 ${scene.scene_number}`,
+          "",
+          `## 시각 묘사`,
+          scene.visual_description,
+          "",
+          `## 이미지 프롬프트`,
+          "```",
+          scene.image_prompt,
+          "```",
+          "",
+          `**카메라**: ${scene.camera_angle}`,
+          `**분위기**: ${scene.mood}`,
+          `**길이**: ${scene.duration_seconds}초`,
+          "",
+          "## 등장인물",
+          ...scene.characters_present.map((c: string) => `- [[${c}]]`),
+          "",
+          "## 핵심 액션",
+          ...scene.key_actions.map((a: string) => `- ${a}`),
+        ].join("\n");
+
+        const num = String(scene.scene_number).padStart(2, "0");
+        await this.writeFile(`${basePath}/스토리보드/${scene.chapter}장-장면${num}.md`, content);
+      }
+    } catch {
+      // Storyboard not generated yet
+    }
+
+    // Pull dialogue
+    try {
+      const dialogue = await this.api.listDialogue(projectId);
+      // Group by chapter+scene
+      const grouped = new Map<string, typeof dialogue>();
+      for (const line of dialogue) {
+        const key = `${line.chapter}-${line.scene_number}`;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key)!.push(line);
+      }
+
+      for (const [key, lines] of grouped) {
+        const first = lines[0];
+        const dialogueLines = lines.map((l) => {
+          const prefix = l.speaker === "해설" ? "**해설**" : `**${l.speaker}** (${l.emotion})`;
+          const dir = l.direction ? ` _${l.direction}_` : "";
+          return `${prefix}:${dir}\n> ${l.text}`;
+        });
+
+        const content = [
+          "---",
+          `chapter: ${first.chapter}`,
+          `scene_number: ${first.scene_number}`,
+          "---",
+          "",
+          `# ${first.chapter}장 장면 ${first.scene_number} 대본`,
+          "",
+          ...dialogueLines.join("\n\n").split("\n"),
+        ].join("\n");
+
+        const num = String(first.scene_number).padStart(2, "0");
+        await this.writeFile(`${basePath}/대본/${first.chapter}장-장면${num}.md`, content);
+      }
+    } catch {
+      // Dialogue not generated yet
     }
   }
 

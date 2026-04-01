@@ -92,6 +92,10 @@ export class NovelMakerView extends ItemView {
     logSection.createEl("h4", { text: "로그" });
     this.logContainer = logSection.createDiv("novel-maker-log");
 
+    // Animation (storyboard + dialogue) section
+    const animContainer = container.createDiv("novel-maker-section");
+    this.renderAnimationSection(animContainer);
+
     // Media (YouTube video) section
     this.mediaContainer = container.createDiv("novel-maker-section");
     this.renderMediaSection();
@@ -652,5 +656,92 @@ export class NovelMakerView extends ItemView {
     } catch {
       // Server not reachable
     }
+  }
+
+  // ---- Animation (Storyboard + Dialogue) ----
+
+  private renderAnimationSection(container: HTMLDivElement): void {
+    container.empty();
+    container.createEl("h4", { text: "스토리보드 / 대본 생성" });
+
+    const genBtn = container.createEl("button", {
+      text: "스토리보드 + 대본 생성",
+      cls: "novel-maker-btn novel-maker-btn-blue",
+    });
+    genBtn.addEventListener("click", async () => {
+      const pid = this.getProjectId();
+      if (!pid) return;
+      try {
+        await this.plugin.api.startAnimationGeneration(pid, {});
+        this.addLog("phase", "스토리보드 + 대본 생성 시작");
+        this.listenAnimationSSE(container);
+      } catch (e) {
+        this.addLog("error", `스토리보드 오류: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    });
+
+    const syncBtn = container.createEl("button", {
+      text: "스토리보드 동기화",
+      cls: "novel-maker-btn novel-maker-btn-gray",
+    });
+    syncBtn.addEventListener("click", async () => {
+      const pid = this.getProjectId();
+      if (!pid || !this.plugin.sync) return;
+      await this.plugin.sync.pullAll(pid);
+      new (await import("obsidian")).Notice("스토리보드 + 대본 동기화 완료!");
+    });
+  }
+
+  private listenAnimationSSE(container: HTMLDivElement): void {
+    const pid = this.getProjectId();
+    if (!pid) return;
+
+    const url = `${this.plugin.settings.serverUrl}/api/projects/${pid}/animation/stream`;
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const response = await fetch(url, {
+          signal: controller.signal,
+          headers: { Accept: "text/event-stream" },
+        });
+        if (!response.ok || !response.body) return;
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          let evt = "", data = "";
+          for (const line of lines) {
+            if (line.startsWith("event:")) evt = line.slice(6).trim();
+            else if (line.startsWith("data:")) data = line.slice(5).trim();
+            else if (line === "" && evt && data) {
+              try {
+                const parsed = JSON.parse(data);
+                if (evt === "anim_phase") {
+                  this.addLog("phase", parsed.message || parsed.phase);
+                } else if (evt === "anim_storyboard_complete") {
+                  this.addLog("chapter", `${parsed.chapter}장 스토리보드 ${parsed.scene_count}장면`);
+                } else if (evt === "anim_dialogue_complete") {
+                  this.addLog("chapter", `${parsed.chapter}장 대본 ${parsed.line_count}라인`);
+                } else if (evt === "anim_done") {
+                  this.addLog("done", `완료! ${parsed.total_scenes}장면, ${parsed.total_lines}대사 (≈$${parsed.cost_usd})`);
+                } else if (evt === "anim_error") {
+                  this.addLog("error", `오류: ${parsed.message}`);
+                }
+              } catch { /* ignore */ }
+              evt = ""; data = "";
+            }
+          }
+        }
+      } catch { /* abort or disconnect */ }
+    })();
   }
 }

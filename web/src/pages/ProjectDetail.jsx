@@ -7,6 +7,7 @@ import OutlineTab from '../components/OutlineTab';
 import GenerateTab from '../components/GenerateTab';
 import ChaptersTab from '../components/ChaptersTab';
 import MediaTab from '../components/MediaTab';
+import AnimationTab from '../components/AnimationTab';
 
 const TABS = [
   { key: 'settings', label: '세계관' },
@@ -14,6 +15,7 @@ const TABS = [
   { key: 'outline', label: '줄거리' },
   { key: 'generate', label: '생성' },
   { key: 'chapters', label: '챕터' },
+  { key: 'animation', label: '애니메이션' },
   { key: 'media', label: '영상' },
 ];
 
@@ -108,6 +110,7 @@ export default function ProjectDetail() {
       {tab === 'outline' && <OutlineTab projectId={id} />}
       {tab === 'generate' && <GenerateTab projectId={id} onDone={load} />}
       {tab === 'chapters' && <ChaptersTab projectId={id} />}
+      {tab === 'animation' && <AnimationTab projectId={id} />}
       {tab === 'media' && <MediaTab projectId={id} />}
     </div>
   );

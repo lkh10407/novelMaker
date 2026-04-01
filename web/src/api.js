@@ -79,6 +79,15 @@ export const getExportMarkdownUrl = (pid) => `${BASE}/${pid}/export/markdown`;
 export const getExportEpubUrl = (pid) => `${BASE}/${pid}/export/epub`;
 export const getExportPdfUrl = (pid) => `${BASE}/${pid}/export/pdf`;
 
+// Animation (Storyboard + Dialogue)
+export const startAnimationGeneration = (pid, data) => request(`${BASE}/${pid}/animation/generate`, { method: 'POST', body: JSON.stringify(data) });
+export const stopAnimationGeneration = (pid) => request(`${BASE}/${pid}/animation/stop`, { method: 'POST' });
+export const getAnimationStatus = (pid) => request(`${BASE}/${pid}/animation/status`);
+export const listStoryboard = (pid) => request(`${BASE}/${pid}/storyboard`);
+export const getChapterStoryboard = (pid, ch) => request(`${BASE}/${pid}/storyboard/${ch}`);
+export const listDialogue = (pid) => request(`${BASE}/${pid}/dialogue`);
+export const getChapterDialogue = (pid, ch) => request(`${BASE}/${pid}/dialogue/${ch}`);
+
 // Media (YouTube Video)
 export const listVoices = (pid) => request(`${BASE}/${pid}/media/voices`);
 export const startMediaGeneration = (pid, data) => request(`${BASE}/${pid}/media/generate`, { method: 'POST', body: JSON.stringify(data) });

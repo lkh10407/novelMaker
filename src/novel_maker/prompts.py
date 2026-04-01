@@ -241,3 +241,89 @@ def replanner_prompt(
 3. 기존 계획과 크게 달라질 필요가 없다면 소폭만 수정해도 된다.
 4. 출력은 수정된 ChapterOutline 배열 JSON이어야 한다.
 """
+
+
+# ---------------------------------------------------------------------------
+# Storyboard Agent
+# ---------------------------------------------------------------------------
+
+STORYBOARD_SYSTEM = """\
+너는 전문 애니메이션 스토리보드 아티스트이다.
+소설 본문을 분석하여 애니메이션 키프레임으로 분해한다.
+
+각 장면(scene)에 대해:
+1. visual_description: 장면의 시각적 구도를 한국어로 상세히 묘사
+2. image_prompt: 이미지 생성 AI(Midjourney/Flux)에 넣을 영문 프롬프트. 반드시 영어로 작성. "anime style," 로 시작하고 구체적인 구도, 조명, 분위기 포함.
+3. camera_angle: 카메라 앵글 (close-up, medium shot, wide shot, over-the-shoulder, bird's eye, low angle 등)
+4. characters_present: 장면에 등장하는 캐릭터 이름
+5. key_actions: 핵심 동작/이벤트
+6. mood: 분위기 키워드
+7. duration_seconds: 예상 장면 길이 (2~8초)
+
+출력은 반드시 JSON 배열이어야 한다:
+[{"chapter": int, "scene_number": int, "visual_description": str, "image_prompt": str, "camera_angle": str, "characters_present": [str], "key_actions": [str], "mood": str, "duration_seconds": float}, ...]
+
+한 챕터당 8~12개 장면으로 분할하라.
+"""
+
+
+def storyboard_prompt(chapter_num: int, chapter_content: str, characters_json: str) -> str:
+    return f"""\
+다음 소설 {chapter_num}장을 애니메이션 스토리보드로 분해해줘.
+
+## {chapter_num}장 본문
+{chapter_content}
+
+## 등장인물 정보
+{characters_json}
+
+## 요구사항
+- 8~12개 장면(scene)으로 분할
+- 각 장면의 image_prompt는 반드시 영어로, "anime style," 로 시작
+- 장면 번호(scene_number)는 1부터 시작
+- chapter 값은 {chapter_num}
+- 감정 변화의 전환점을 장면 분할의 기준으로 삼을 것
+"""
+
+
+# ---------------------------------------------------------------------------
+# Dialogue Agent
+# ---------------------------------------------------------------------------
+
+DIALOGUE_SYSTEM = """\
+너는 애니메이션 대본 작가이다.
+소설 본문과 스토리보드 장면 목록을 분석하여, 각 장면에 맞는 나레이션과 대사를 작성한다.
+
+각 대사(line)에 대해:
+1. speaker: "해설" (나레이션) 또는 캐릭터 이름
+2. text: 대사/나레이션 텍스트 (자연스러운 구어체)
+3. emotion: 감정 톤 (neutral, happy, sad, angry, surprised, whisper, serious 등)
+4. direction: 연기 지시 (선택. 예: "속삭이듯", "단호하게", "떨리는 목소리로")
+
+출력은 반드시 JSON 배열이어야 한다:
+[{"chapter": int, "scene_number": int, "speaker": str, "text": str, "emotion": str, "direction": str}, ...]
+
+규칙:
+- 각 장면에 최소 1개 이상의 라인 (해설 또는 대사)
+- 해설은 3인칭 관찰자 시점으로 간결하게
+- 캐릭터 대사는 성격에 맞는 어투 유지
+- TTS로 읽혀질 것이므로 발음하기 쉬운 자연스러운 문장
+"""
+
+
+def dialogue_prompt(chapter_num: int, chapter_content: str, storyboard_json: str) -> str:
+    return f"""\
+다음 {chapter_num}장의 스토리보드 장면에 맞는 나레이션과 대사를 작성해줘.
+
+## {chapter_num}장 본문
+{chapter_content}
+
+## 스토리보드 장면 목록
+{storyboard_json}
+
+## 요구사항
+- 각 scene_number에 맞는 대사/나레이션 작성
+- chapter 값은 {chapter_num}
+- 해설(나레이션)은 장면 전환이나 내면 묘사에 사용
+- 캐릭터 대사는 원문의 대화를 기반으로 하되, 영상에 맞게 간결하게 조정
+"""
